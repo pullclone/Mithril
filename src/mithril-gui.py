@@ -401,6 +401,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Could not check mounts: {e}", 5000)
         
         self.refresh_volumes_list()
+        self.save_current_profile()
         self.update_tray_menu()
 
     def refresh_volumes_list(self):
@@ -437,7 +438,8 @@ class MainWindow(QMainWindow):
         if flags.get("reverse"): extra_args.append("-reverse")
         if flags.get("scryptn"): extra_args.append(f"-scryptn {flags['scryptn']}")
         
-        command = f"gocryptfs {' '.join(extra_args)} '{cipher_dir}' '{mount_point}'"
+        command_args = ["gocryptfs", *extra_args, cipher_dir, mount_point]
+        process = subprocess.Popen(command_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         self.run_gocryptfs_command(command, True, f"Mounted {volume['label']}", self.update_mounted_list)
 
     def unmount_volume(self, volume_id):
@@ -468,10 +470,11 @@ class MainWindow(QMainWindow):
         combo.setCurrentText(self.current_profile_name)
 
     def save_current_profile(self):
+        import copy
         profile_name = self.simplified_view.profile_combo.currentText()
         if not profile_name: return
         
-        self.profiles[profile_name] = self.profiles.get(self.current_profile_name, {"volumes": []})
+        self.profiles[profile_name] = copy.deepcopy(self.profiles.get(self.current_profile_name, {"volumes": []}))
         self.current_profile_name = profile_name
 
         try:
@@ -484,25 +487,88 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Could not save profiles: {e}")
 
     def switch_profile(self):
+        else:
+            reply = QMessageBox.question(self, 'Confirm Profile Creation', f"Create new profile '{new_profile}'?")
+            if reply == QMessageBox.StandardButton.Yes:
+                self.profiles[new_profile] = {'volumes': []}
+                self.current_profile_name = new_profile
+                self.save_current_profile()
+                self.simplified_view.refresh_volumes_list()
+                self.statusBar().showMessage(f"Created and switched to new profile '{new_profile}'.", 3000)
+            else:
+                self.simplified_view.profile_combo.setCurrentText(self.current_profile_name)
         new_profile = self.simplified_view.profile_combo.currentText()
+        else:
+            reply = QMessageBox.question(self, 'Confirm Profile Creation', f"Create new profile '{new_profile}'?")
+            if reply == QMessageBox.StandardButton.Yes:
+                self.profiles[new_profile] = {'volumes': []}
+                self.current_profile_name = new_profile
+                self.save_current_profile()
+                self.simplified_view.refresh_volumes_list()
+                self.statusBar().showMessage(f"Created and switched to new profile '{new_profile}'.", 3000)
+            else:
+                self.simplified_view.profile_combo.setCurrentText(self.current_profile_name)
         if new_profile in self.profiles:
+        else:
+            reply = QMessageBox.question(self, 'Confirm Profile Creation', f"Create new profile '{new_profile}'?")
+            if reply == QMessageBox.StandardButton.Yes:
+                self.profiles[new_profile] = {'volumes': []}
+                self.current_profile_name = new_profile
+                self.save_current_profile()
+                self.simplified_view.refresh_volumes_list()
+                self.statusBar().showMessage(f"Created and switched to new profile '{new_profile}'.", 3000)
+            else:
+                self.simplified_view.profile_combo.setCurrentText(self.current_profile_name)
             self.current_profile_name = new_profile
+        else:
+            reply = QMessageBox.question(self, 'Confirm Profile Creation', f"Create new profile '{new_profile}'?")
+            if reply == QMessageBox.StandardButton.Yes:
+                self.profiles[new_profile] = {'volumes': []}
+                self.current_profile_name = new_profile
+                self.save_current_profile()
+                self.simplified_view.refresh_volumes_list()
+                self.statusBar().showMessage(f"Created and switched to new profile '{new_profile}'.", 3000)
+            else:
+                self.simplified_view.profile_combo.setCurrentText(self.current_profile_name)
             self.settings.setValue("last_profile", new_profile)
+        else:
+            reply = QMessageBox.question(self, 'Confirm Profile Creation', f"Create new profile '{new_profile}'?")
+            if reply == QMessageBox.StandardButton.Yes:
+                self.profiles[new_profile] = {'volumes': []}
+                self.current_profile_name = new_profile
+                self.save_current_profile()
+                self.simplified_view.refresh_volumes_list()
+                self.statusBar().showMessage(f"Created and switched to new profile '{new_profile}'.", 3000)
+            else:
+                self.simplified_view.profile_combo.setCurrentText(self.current_profile_name)
             self.statusBar().showMessage(f"Switched to profile '{new_profile}'.", 3000)
+        else:
+            reply = QMessageBox.question(self, 'Confirm Profile Creation', f"Create new profile '{new_profile}'?")
+            if reply == QMessageBox.StandardButton.Yes:
+                self.profiles[new_profile] = {'volumes': []}
+                self.current_profile_name = new_profile
+                self.save_current_profile()
+                self.simplified_view.refresh_volumes_list()
+                self.statusBar().showMessage(f"Created and switched to new profile '{new_profile}'.", 3000)
+            else:
+                self.simplified_view.profile_combo.setCurrentText(self.current_profile_name)
             self.update_mounted_list() # This will refresh the view
         
     def add_volume_to_profile(self, data):
         profile = self.profiles.setdefault(self.current_profile_name, {"volumes": []})
         profile["volumes"].append(data)
         self.refresh_volumes_list()
+        self.save_current_profile()
 
     def update_volume_in_profile(self, volume_id, data):
         self.profiles[self.current_profile_name]["volumes"][volume_id].update(data)
         self.refresh_volumes_list()
+        self.save_current_profile()
         
     def remove_volume_from_profile(self, volume_id):
         del self.profiles[self.current_profile_name]["volumes"][volume_id]
         self.refresh_volumes_list()
+        self.save_current_profile()
 
     def update_volume_flags(self, volume_id, flags):
         if self.current_profile_name in self.profiles and volume_id < len(self.profiles[self.current_profile_name]["volumes"]):
