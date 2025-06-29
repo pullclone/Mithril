@@ -26,7 +26,7 @@ class ErrorDialog(QDialog):
         layout = QVBoxLayout(self)
 
         layout.addWidget(QLabel(message))
-        
+
         error_output = QTextEdit(stderr_text)
         error_output.setReadOnly(True)
         error_output.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
@@ -42,11 +42,11 @@ class VolumeDialog(QDialog):
     def __init__(self, volume_data=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Volume Details")
-        
+
         self.label_edit = QLineEdit()
         self.cipher_dir_edit = QLineEdit()
         self.mount_point_edit = QLineEdit()
-        
+
         if volume_data:
             self.label_edit.setText(volume_data.get("label", ""))
             self.cipher_dir_edit.setText(volume_data.get("cipher_dir", ""))
@@ -56,7 +56,7 @@ class VolumeDialog(QDialog):
         layout.addRow("Label:", self.label_edit)
         layout.addRow("Encrypted Folder:", self.cipher_dir_edit)
         layout.addRow("Mount Point:", self.mount_point_edit)
-        
+
         button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
@@ -95,7 +95,7 @@ class SimplifiedView(QWidget):
         self.volumes_list = QListWidget()
         self.volumes_list.itemSelectionChanged.connect(self.main_window.on_volume_selected)
         layout.addWidget(self.volumes_list)
-        
+
         # --- Volume Actions ---
         vol_actions_layout = QHBoxLayout()
         self.add_button = QPushButton(QIcon.fromTheme("list-add"), " Add")
@@ -131,11 +131,11 @@ class SimplifiedView(QWidget):
         volume_id = self.get_selected_volume_id()
         if volume_id is None: return
         volume_data = self.main_window.profiles[self.main_window.current_profile_name]["volumes"][volume_id]
-        
+
         dialog = VolumeDialog(volume_data, self)
         if dialog.exec():
             self.main_window.update_volume_in_profile(volume_id, dialog.get_data())
-    
+
     def remove_volume(self):
         volume_id = self.get_selected_volume_id()
         if volume_id is None: return
@@ -168,7 +168,7 @@ class AdvancedView(QWidget):
 
         self.form_widget = QWidget()
         layout = QFormLayout(self.form_widget)
-        
+
         self.allow_other_cb = QCheckBox("Allow other users to access files")
         self.allow_other_cb.setToolTip("-allow_other")
         layout.addRow("Allow Other:", self.allow_other_cb)
@@ -176,14 +176,14 @@ class AdvancedView(QWidget):
         self.reverse_cb = QCheckBox("Reverse mode (show decrypted view of encrypted dir)")
         self.reverse_cb.setToolTip("-reverse")
         layout.addRow("Reverse Mode:", self.reverse_cb)
-        
+
         self.scryptn_edit = QLineEdit()
         self.scryptn_edit.setToolTip("-scryptn N: Set scrypt cost parameter to 2^N")
         layout.addRow("scryptn (N):", self.scryptn_edit)
 
         self.main_layout.addWidget(self.form_widget)
         self.main_layout.addStretch()
-        
+
         # Connect signals to save changes when a flag is toggled
         self.allow_other_cb.stateChanged.connect(self.save_flags)
         self.reverse_cb.stateChanged.connect(self.save_flags)
@@ -199,18 +199,18 @@ class AdvancedView(QWidget):
             self.reverse_cb.setChecked(False)
             self.scryptn_edit.clear()
             return
-        
+
         self.form_widget.setEnabled(True)
         profile_name = self.main_window.current_profile_name
         all_flags = self.main_window.profiles[profile_name]["volumes"][volume_id].get("flags", {})
-        
+
         self.allow_other_cb.setChecked(all_flags.get("allow_other", False))
         self.reverse_cb.setChecked(all_flags.get("reverse", False))
         self.scryptn_edit.setText(all_flags.get("scryptn", ""))
-        
+
     def save_flags(self):
         if self.current_volume_id is None: return
-        
+
         flags = {
             "allow_other": self.allow_other_cb.isChecked(),
             "reverse": self.reverse_cb.isChecked(),
@@ -225,7 +225,7 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(QIcon.fromTheme("breeze"))
         self.setMinimumSize(QSize(700, 500))
         self.settings = QSettings(ORGANIZATION_NAME, APPLICATION_NAME)
-        
+
         self.cached_password = None
         self.profiles = {}
         self.current_profile_name = "Default"
@@ -254,24 +254,24 @@ class MainWindow(QMainWindow):
         self.stacked_widget.addWidget(self.simplified_view)
         self.stacked_widget.addWidget(self.advanced_view)
         self.main_layout.addWidget(self.stacked_widget)
-        
+
         self.setCentralWidget(self.central_widget)
-        
+
     def _setup_terminal(self, terminal_emulator='konsole'):
         self.terminal_container = QWidget()
         self.terminal_container.setFixedHeight(0)
         self.terminal_layout = QVBoxLayout(self.terminal_container)
         self.terminal_layout.setContentsMargins(0, 0, 0, 0)
-        
+
         self.terminal_process = QProcess(self)
         shell = os.environ.get('SHELL', 'sh')
-        
+
         if terminal_emulator == 'konsole':
             self.terminal_process.start("konsole", [
                 "--nomenubar", "--notabbar", "--noframe", "-e", shell,
                 "--embed", str(int(self.terminal_container.winId()))
             ])
-        
+
     def _create_actions(self):
         self.quit_action = QAction("&Quit", self)
         self.quit_action.triggered.connect(self.close_app)
@@ -316,7 +316,7 @@ class MainWindow(QMainWindow):
 
     def update_tray_menu(self):
         self.tray_menu.clear()
-        
+
         # Add favorite volumes to the menu
         profile = self.profiles.get(self.current_profile_name, {})
         volumes = profile.get("volumes", [])
@@ -343,10 +343,9 @@ class MainWindow(QMainWindow):
 
     def run_gocryptfs_command(self, command_str, needs_password=False, success_message="", on_success=None):
         self.write_to_terminal(command_str)
-        
+
         password = None
         if needs_password:
-            remember_pass = False
             if self.cached_password:
                 password = self.cached_password.encode('utf-8')
             else:
@@ -354,7 +353,7 @@ class MainWindow(QMainWindow):
                 dialog.setWindowTitle("Password Required")
                 dialog.setLabelText("Enter password:")
                 dialog.setTextEchoMode(QLineEdit.EchoMode.Password)
-                
+
                 checkbox = QCheckBox("Remember password for this session", dialog)
                 dialog.layout().addWidget(checkbox)
 
@@ -375,15 +374,21 @@ class MainWindow(QMainWindow):
 
             if result.returncode == 0:
                 self.statusBar().showMessage(success_message, 5000)
-                self.tray_icon.showMessage("Success", success_message, QSystemTrayIcon.MessageIcon.Information, 3000)
-                if on_success: on_success()
+                self.tray_icon.showMessage(
+                    "Success",
+                    success_message,
+                    QSystemTrayIcon.MessageIcon.Information,
+                    3000,
+                )
+                if on_success:
+                    on_success()
             else:
                 error_output = result.stderr.decode('utf-8').strip()
                 error_msg = f"Error executing command (Code: {result.returncode})"
                 self.statusBar().showMessage(error_msg, 8000)
                 error_dialog = ErrorDialog(error_msg, error_output, self)
                 error_dialog.exec()
-        
+
         except Exception as e:
             QMessageBox.critical(self, "Unexpected Error", f"An unexpected error occurred: {e}")
 
@@ -399,8 +404,9 @@ class MainWindow(QMainWindow):
                     self.mounted_paths.add(mount_point)
         except Exception as e:
             self.statusBar().showMessage(f"Could not check mounts: {e}", 5000)
-        
+
         self.refresh_volumes_list()
+        self.save_current_profile()
         self.update_tray_menu()
 
     def refresh_volumes_list(self):
@@ -415,7 +421,7 @@ class MainWindow(QMainWindow):
             item.setToolTip(f"Mount Point: {vol.get('mount_point')}")
             item.setData(Qt.ItemDataRole.UserRole, i) # Store index as ID
             self.simplified_view.volumes_list.addItem(item)
-    
+
     def on_volume_selected(self):
         volume_id = self.simplified_view.get_selected_volume_id()
         self.advanced_view.load_flags_for_volume(volume_id)
@@ -436,8 +442,9 @@ class MainWindow(QMainWindow):
         if flags.get("allow_other"): extra_args.append("-allow_other")
         if flags.get("reverse"): extra_args.append("-reverse")
         if flags.get("scryptn"): extra_args.append(f"-scryptn {flags['scryptn']}")
-        
-        command = f"gocryptfs {' '.join(extra_args)} '{cipher_dir}' '{mount_point}'"
+
+        command_args = ["gocryptfs", *extra_args, cipher_dir, mount_point]
+        command = shlex.join(command_args)
         self.run_gocryptfs_command(command, True, f"Mounted {volume['label']}", self.update_mounted_list)
 
     def unmount_volume(self, volume_id):
@@ -446,7 +453,7 @@ class MainWindow(QMainWindow):
             f"gocryptfs -unmount '{volume['mount_point']}'",
             False, f"Unmounted {volume['label']}", self.update_mounted_list
         )
-    
+
     # --- Profile Management ---
     def load_profiles(self):
         os.makedirs(os.path.dirname(PROFILES_FILE), exist_ok=True)
@@ -455,23 +462,24 @@ class MainWindow(QMainWindow):
                 self.profiles = json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
             self.profiles = {"Default": {"volumes": []}}
-        
+
         combo = self.simplified_view.profile_combo
         combo.blockSignals(True)
         combo.clear()
         combo.addItems(self.profiles.keys())
         combo.blockSignals(False)
-        
+
         self.current_profile_name = self.settings.value("last_profile", "Default")
         if self.current_profile_name not in self.profiles:
             self.current_profile_name = "Default"
         combo.setCurrentText(self.current_profile_name)
 
     def save_current_profile(self):
+        import copy
         profile_name = self.simplified_view.profile_combo.currentText()
         if not profile_name: return
-        
-        self.profiles[profile_name] = self.profiles.get(self.current_profile_name, {"volumes": []})
+
+        self.profiles[profile_name] = copy.deepcopy(self.profiles.get(self.current_profile_name, {"volumes": []}))
         self.current_profile_name = profile_name
 
         try:
@@ -485,38 +493,58 @@ class MainWindow(QMainWindow):
 
     def switch_profile(self):
         new_profile = self.simplified_view.profile_combo.currentText()
+
         if new_profile in self.profiles:
             self.current_profile_name = new_profile
-            self.settings.setValue("last_profile", new_profile)
-            self.statusBar().showMessage(f"Switched to profile '{new_profile}'.", 3000)
-            self.update_mounted_list() # This will refresh the view
-        
+        else:
+            reply = QMessageBox.question(
+                self,
+                "Confirm Profile Creation",
+                f"Create new profile '{new_profile}'?"
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self.profiles[new_profile] = {"volumes": []}
+                self.current_profile_name = new_profile
+                self.save_current_profile()
+                self.simplified_view.refresh_volumes_list()
+                self.statusBar().showMessage(
+                    f"Created and switched to new profile '{new_profile}'.", 3000
+                )
+            else:
+                self.simplified_view.profile_combo.setCurrentText(self.current_profile_name)
+
+        self.settings.setValue("last_profile", new_profile)
+        self.update_mounted_list()
+
     def add_volume_to_profile(self, data):
         profile = self.profiles.setdefault(self.current_profile_name, {"volumes": []})
         profile["volumes"].append(data)
         self.refresh_volumes_list()
+        self.save_current_profile()
 
     def update_volume_in_profile(self, volume_id, data):
         self.profiles[self.current_profile_name]["volumes"][volume_id].update(data)
         self.refresh_volumes_list()
-        
+        self.save_current_profile()
+
     def remove_volume_from_profile(self, volume_id):
         del self.profiles[self.current_profile_name]["volumes"][volume_id]
         self.refresh_volumes_list()
+        self.save_current_profile()
 
     def update_volume_flags(self, volume_id, flags):
         if self.current_profile_name in self.profiles and volume_id < len(self.profiles[self.current_profile_name]["volumes"]):
             self.profiles[self.current_profile_name]["volumes"][volume_id]["flags"] = flags
             # No need to save to disk on every checkmark, we'll save with the profile
             # self.save_current_profile()
-        
+
     # --- Event Handlers and Utils ---
     def closeEvent(self, event):
         """Override close event to hide to tray instead of quitting."""
         event.ignore()
         self.hide()
         self.tray_icon.showMessage("Still Running", "gocryptfs Manager is running in the background.", QSystemTrayIcon.MessageIcon.Information, 2000)
-        
+
     def close_app(self):
         """Properly closes the application."""
         self.save_current_profile() # Save on quit
@@ -525,7 +553,15 @@ class MainWindow(QMainWindow):
     def clear_cached_password(self):
         self.cached_password = None
         self.statusBar().showMessage("Session password cache cleared.", 3000)
-        
+
+    def write_to_terminal(self, command_str):
+        """Write a command string to the embedded terminal."""
+        if hasattr(self, "terminal_process") and self.terminal_process is not None:
+            try:
+                self.terminal_process.write((command_str + "\n").encode())
+            except Exception:
+                pass
+
     # --- Toggles ---
     def toggle_terminal(self):
         end_height = 200 if self.terminal_container.height() == 0 else 0
@@ -541,7 +577,7 @@ class MainWindow(QMainWindow):
         else:
             self.stacked_widget.setCurrentWidget(self.simplified_view)
             self.switch_view_action.setText("Switch to &Advanced View")
-            
+
 def main():
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False) # Important for tray icon functionality
