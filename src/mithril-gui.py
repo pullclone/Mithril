@@ -11,8 +11,15 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import QProcess, QSize, Qt, QPropertyAnimation, QEasingCurve, QSettings
 from PyQt6.QtGui import QAction, QIcon
-os.environ["QT_QPA_PLATFORMTHEME"] = "gtk3"
-os.environ["QT_QPA_PLATFORM"] = "xcb"
+# Only set Linux-specific Qt platform on Linux
+if sys.platform.startswith("linux"):
+    os.environ["QT_QPA_PLATFORMTHEME"] = "gtk3"
+    os.environ["QT_QPA_PLATFORM"] = "xcb"
+
+# Directory for bundled icons
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+ICONS_DIR = os.path.normpath(os.path.join(SCRIPT_DIR, os.pardir, "icons"))
+
 # --- Configuration ---
 ORGANIZATION_NAME = "GocryptfsGUI"
 APPLICATION_NAME = "GocryptfsManager"
@@ -223,7 +230,13 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("gocryptfs Manager")
-        self.setWindowIcon(QIcon.fromTheme("breeze"))
+        # Set application icon from bundled icons
+        if sys.platform.startswith("win"):
+            icon_path = os.path.join(ICONS_DIR, "mithril.ico")
+        else:
+            icon_path = os.path.join(ICONS_DIR, "icon_256.png")
+        self.app_icon = QIcon(icon_path)
+        self.setWindowIcon(self.app_icon)
         self.setMinimumSize(QSize(700, 500))
         self.settings = QSettings(ORGANIZATION_NAME, APPLICATION_NAME)
 
@@ -298,7 +311,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Ready", 3000)
 
     def _create_tray_icon(self):
-        self.tray_icon = QSystemTrayIcon(QIcon.fromTheme("drive-harddisk"), self)
+        self.tray_icon = QSystemTrayIcon(self.app_icon, self)
         self.tray_menu = QMenu()
         self.tray_icon.setContextMenu(self.tray_menu)
         self.tray_icon.show()
