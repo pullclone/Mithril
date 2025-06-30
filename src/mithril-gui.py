@@ -11,7 +11,8 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import QProcess, QSize, Qt, QPropertyAnimation, QEasingCurve, QSettings
 from PyQt6.QtGui import QAction, QIcon
-
+os.environ["QT_QPA_PLATFORMTHEME"] = "gtk3"
+os.environ["QT_QPA_PLATFORM"] = "xcb"
 # --- Configuration ---
 ORGANIZATION_NAME = "GocryptfsGUI"
 APPLICATION_NAME = "GocryptfsManager"
@@ -581,6 +582,7 @@ class MainWindow(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False) # Important for tray icon functionality
+    app.setAttribute(Qt.ApplicationAttribute.AA_DontUseNativeMenuBar, False)
 
     for app_name in ['gocryptfs', 'konsole']:
         if subprocess.run(['which', app_name], capture_output=True).returncode != 0:
