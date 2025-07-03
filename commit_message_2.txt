@@ -1,0 +1,19 @@
+feat: Implement profile management and unify UI
+
+This commit introduces a full-featured profile management system and refactors the main UI to be more intuitive and powerful.
+
+Key changes:
+
+- **Add Profile Management**:
+    - A "Manage" button with a dropdown menu has been added next to the profile selector.
+    - Users can now create, rename, and delete profiles directly from the GUI.
+    - The "Default" profile is protected from being renamed or deleted to ensure application stability.
+
+- **Fix Critical Tray Menu Crash**:
+    - Resolved a major bug in `update_tray_menu` where all tray menu actions were incorrectly bound to the last volume in the list.
+    - This fix prevents crashes that occurred when switching between profiles with a different number of volumes.
+
+- **Unify Main View**:
+    - Removed the separate "Advanced View" and the "Switch View" button.
+    - The advanced flags are now located in a collapsible group box directly within the main view, allowing users to see all information at once.
+    - The expanded/collapsed state of the advanced flags section is now saved and restored between sessions.

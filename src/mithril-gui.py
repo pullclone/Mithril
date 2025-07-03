@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QListWidget, QStackedWidget, QMenuBar, QFileDialog, QInputDialog, QMessageBox,
     QDialog, QFormLayout, QLineEdit, QLabel, QDialogButtonBox, QComboBox,
-    QListWidgetItem, QCheckBox, QSystemTrayIcon, QMenu, QTextEdit
+    QListWidgetItem, QCheckBox, QSystemTrayIcon, QMenu, QTextEdit, QToolButton, QGroupBox
 )
 from PyQt6.QtCore import QProcess, QSize, Qt, QPropertyAnimation, QEasingCurve, QSettings, QTimer
 from PyQt6.QtGui import QAction, QIcon
@@ -92,9 +92,26 @@ class SimplifiedView(QWidget):
         self.profile_combo = QComboBox()
         self.profile_combo.setEditable(True)
         self.profile_combo.currentIndexChanged.connect(self.main_window.switch_profile)
+        
+        self.manage_profiles_button = QToolButton()
+        self.manage_profiles_button.setIcon(QIcon.fromTheme("document-properties"))
+        self.manage_profiles_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.manage_profiles_menu = QMenu(self)
+        self.manage_profiles_button.setMenu(self.manage_profiles_menu)
+        
+        self.new_profile_action = self.manage_profiles_menu.addAction("New Profile...")
+        self.rename_profile_action = self.manage_profiles_menu.addAction("Rename Current Profile...")
+        self.delete_profile_action = self.manage_profiles_menu.addAction("Delete Current Profile")
+
+        self.new_profile_action.triggered.connect(self.main_window.new_profile)
+        self.rename_profile_action.triggered.connect(self.main_window.rename_profile)
+        self.delete_profile_action.triggered.connect(self.main_window.delete_profile)
+
         self.save_profile_button = QPushButton(QIcon.fromTheme("document-save"), " Save")
         self.save_profile_button.clicked.connect(self.main_window.save_current_profile)
+        
         profile_layout.addWidget(self.profile_combo)
+        profile_layout.addWidget(self.manage_profiles_button)
         profile_layout.addWidget(self.save_profile_button)
         layout.addLayout(profile_layout)
 
@@ -103,6 +120,28 @@ class SimplifiedView(QWidget):
         self.volumes_list = QListWidget()
         self.volumes_list.itemSelectionChanged.connect(self.main_window.on_volume_selected)
         layout.addWidget(self.volumes_list)
+
+        # --- Advanced Flags Group ---
+        self.advanced_group = QGroupBox("Advanced Flags")
+        self.advanced_group.setCheckable(True)
+        self.advanced_group.setChecked(False)
+        self.advanced_group.toggled.connect(lambda checked: self.main_window.settings.setValue("advanced_flags_expanded", checked))
+        
+        advanced_layout = QFormLayout(self.advanced_group)
+        self.allow_other_cb = QCheckBox("Allow other users to access files")
+        self.allow_other_cb.setToolTip("-allow_other")
+        advanced_layout.addRow("Allow Other:", self.allow_other_cb)
+
+        self.reverse_cb = QCheckBox("Reverse mode (show decrypted view of encrypted dir)")
+        self.reverse_cb.setToolTip("-reverse")
+        advanced_layout.addRow("Reverse Mode:", self.reverse_cb)
+
+        self.scryptn_edit = QLineEdit()
+        self.scryptn_edit.setToolTip("-scryptn N: Set scrypt cost parameter to 2^N")
+        advanced_layout.addRow("scryptn (N):", self.scryptn_edit)
+        
+        self.advanced_group.setEnabled(False)
+        layout.addWidget(self.advanced_group)
 
         # --- Volume Actions ---
         vol_actions_layout = QHBoxLayout()
@@ -125,6 +164,10 @@ class SimplifiedView(QWidget):
         self.remove_button.clicked.connect(self.remove_volume)
         self.mount_button.clicked.connect(self.mount_selected_volume)
         self.unmount_button.clicked.connect(self.unmount_selected_volume)
+        
+        self.allow_other_cb.stateChanged.connect(self.save_flags)
+        self.reverse_cb.stateChanged.connect(self.save_flags)
+        self.scryptn_edit.textChanged.connect(self.save_flags)
 
     def get_selected_volume_id(self):
         item = self.volumes_list.currentItem()
@@ -160,55 +203,16 @@ class SimplifiedView(QWidget):
         volume_id = self.get_selected_volume_id()
         if volume_id is None: return
         self.main_window.unmount_volume(volume_id)
-
-class AdvancedView(QWidget):
-    """A panel for editing gocryptfs flags for the selected volume."""
-    def __init__(self, main_window):
-        super().__init__()
-        self.main_window = main_window
-        self.current_volume_id = None
-
-        self.main_layout = QVBoxLayout(self)
-        self.main_layout.setContentsMargins(15, 15, 15, 15)
-
-        title = QLabel("<b>Advanced Flags for Selected Volume</b>")
-        self.main_layout.addWidget(title)
-
-        self.form_widget = QWidget()
-        layout = QFormLayout(self.form_widget)
-
-        self.allow_other_cb = QCheckBox("Allow other users to access files")
-        self.allow_other_cb.setToolTip("-allow_other")
-        layout.addRow("Allow Other:", self.allow_other_cb)
-
-        self.reverse_cb = QCheckBox("Reverse mode (show decrypted view of encrypted dir)")
-        self.reverse_cb.setToolTip("-reverse")
-        layout.addRow("Reverse Mode:", self.reverse_cb)
-
-        self.scryptn_edit = QLineEdit()
-        self.scryptn_edit.setToolTip("-scryptn N: Set scrypt cost parameter to 2^N")
-        layout.addRow("scryptn (N):", self.scryptn_edit)
-
-        self.main_layout.addWidget(self.form_widget)
-        self.main_layout.addStretch()
-
-        # Connect signals to save changes when a flag is toggled
-        self.allow_other_cb.stateChanged.connect(self.save_flags)
-        self.reverse_cb.stateChanged.connect(self.save_flags)
-        self.scryptn_edit.textChanged.connect(self.save_flags)
-
-        self.form_widget.setEnabled(False) # Disable until a volume is selected
-
+        
     def load_flags_for_volume(self, volume_id):
-        self.current_volume_id = volume_id
         if volume_id is None:
-            self.form_widget.setEnabled(False)
+            self.advanced_group.setEnabled(False)
             self.allow_other_cb.setChecked(False)
             self.reverse_cb.setChecked(False)
             self.scryptn_edit.clear()
             return
 
-        self.form_widget.setEnabled(True)
+        self.advanced_group.setEnabled(True)
         profile_name = self.main_window.current_profile_name
         all_flags = self.main_window.profiles[profile_name]["volumes"][volume_id].get("flags", {})
 
@@ -217,14 +221,16 @@ class AdvancedView(QWidget):
         self.scryptn_edit.setText(all_flags.get("scryptn", ""))
 
     def save_flags(self):
-        if self.current_volume_id is None: return
+        volume_id = self.get_selected_volume_id()
+        if volume_id is None: return
 
         flags = {
             "allow_other": self.allow_other_cb.isChecked(),
             "reverse": self.reverse_cb.isChecked(),
             "scryptn": self.scryptn_edit.text(),
         }
-        self.main_window.update_volume_flags(self.current_volume_id, flags)
+        self.main_window.update_volume_flags(volume_id, flags)
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -262,14 +268,14 @@ class MainWindow(QMainWindow):
         self.main_layout.setSpacing(0)
         self.main_layout.addWidget(self.terminal_container)
 
-        self.stacked_widget = QStackedWidget()
         self.simplified_view = SimplifiedView(self)
-        self.advanced_view = AdvancedView(self)
-        self.stacked_widget.addWidget(self.simplified_view)
-        self.stacked_widget.addWidget(self.advanced_view)
-        self.main_layout.addWidget(self.stacked_widget)
+        self.main_layout.addWidget(self.simplified_view)
 
         self.setCentralWidget(self.central_widget)
+        
+        # Restore advanced flags visibility
+        expanded = self.settings.value("advanced_flags_expanded", False, type=bool)
+        self.simplified_view.advanced_group.setChecked(expanded)
 
     def _setup_terminal(self):
         self.terminal_container = QWidget()
@@ -317,8 +323,6 @@ class MainWindow(QMainWindow):
         self.quit_action.triggered.connect(self.close_app)
         self.toggle_terminal_action = QAction("Toggle &Terminal", self, shortcut="F12")
         self.toggle_terminal_action.triggered.connect(self.toggle_terminal)
-        self.switch_view_action = QAction("Switch to &Advanced View", self, checkable=True)
-        self.switch_view_action.triggered.connect(self.switch_view)
         self.clear_cache_action = QAction("Clear Cached Password", self)
         self.clear_cache_action.triggered.connect(self.clear_cached_password)
 
@@ -331,7 +335,6 @@ class MainWindow(QMainWindow):
 
         view_menu = menu_bar.addMenu("&View")
         view_menu.addAction(self.toggle_terminal_action)
-        view_menu.addAction(self.switch_view_action)
 
     def _create_status_bar(self):
         self.statusBar().showMessage("Ready", 3000)
@@ -365,7 +368,10 @@ class MainWindow(QMainWindow):
             is_mounted = vol.get('mount_point') in self.mounted_paths
             icon = "media-eject" if is_mounted else "media-mount"
             action = QAction(QIcon.fromTheme(icon), label, self)
+            
+            # Correctly capture the volume index `i` for the lambda
             action.triggered.connect(lambda checked, vol_id=i: self.toggle_mount_from_tray(vol_id))
+            
             self.tray_menu.addAction(action)
 
         self.tray_menu.addSeparator()
@@ -478,7 +484,7 @@ class MainWindow(QMainWindow):
 
     def on_volume_selected(self):
         volume_id = self.simplified_view.get_selected_volume_id()
-        self.advanced_view.load_flags_for_volume(volume_id)
+        self.simplified_view.load_flags_for_volume(volume_id)
 
     def mount_volume(self, volume_id):
         volume = self.profiles[self.current_profile_name]["volumes"][volume_id]
@@ -509,6 +515,50 @@ class MainWindow(QMainWindow):
         )
 
     # --- Profile Management ---
+    def new_profile(self):
+        text, ok = QInputDialog.getText(self, 'New Profile', 'Enter new profile name:')
+        if ok and text:
+            if text in self.profiles:
+                QMessageBox.warning(self, "Profile Exists", "A profile with this name already exists.")
+                return
+            self.profiles[text] = {"volumes": []}
+            self.simplified_view.profile_combo.addItem(text)
+            self.simplified_view.profile_combo.setCurrentText(text)
+            self.save_current_profile()
+
+    def rename_profile(self):
+        old_name = self.current_profile_name
+        if old_name == "Default":
+            QMessageBox.warning(self, "Cannot Rename", "The 'Default' profile cannot be renamed.")
+            return
+        
+        text, ok = QInputDialog.getText(self, 'Rename Profile', 'Enter new name:', text=old_name)
+        if ok and text and text != old_name:
+            if text in self.profiles:
+                QMessageBox.warning(self, "Profile Exists", "A profile with this name already exists.")
+                return
+            self.profiles[text] = self.profiles.pop(old_name)
+            self.current_profile_name = text
+            self.simplified_view.profile_combo.blockSignals(True)
+            self.simplified_view.profile_combo.removeItem(self.simplified_view.profile_combo.findText(old_name))
+            self.simplified_view.profile_combo.addItem(text)
+            self.simplified_view.profile_combo.setCurrentText(text)
+            self.simplified_view.profile_combo.blockSignals(False)
+            self.save_current_profile()
+
+    def delete_profile(self):
+        profile_name = self.current_profile_name
+        if profile_name == "Default":
+            QMessageBox.warning(self, "Cannot Delete", "The 'Default' profile cannot be deleted.")
+            return
+
+        reply = QMessageBox.question(self, "Confirm Delete", f"Are you sure you want to delete the profile '{profile_name}'?")
+        if reply == QMessageBox.StandardButton.Yes:
+            del self.profiles[profile_name]
+            self.simplified_view.profile_combo.removeItem(self.simplified_view.profile_combo.findText(profile_name))
+            self.simplified_view.profile_combo.setCurrentText("Default")
+            self.save_current_profile()
+
     def load_profiles(self):
         os.makedirs(os.path.dirname(PROFILES_FILE), exist_ok=True)
         try:
@@ -516,6 +566,9 @@ class MainWindow(QMainWindow):
                 self.profiles = json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
             self.profiles = {"Default": {"volumes": []}}
+        
+        if "Default" not in self.profiles:
+            self.profiles["Default"] = {"volumes": []}
 
         combo = self.simplified_view.profile_combo
         combo.blockSignals(True)
@@ -646,14 +699,6 @@ class MainWindow(QMainWindow):
         self.animation.setDuration(300)
         self.animation.setEndValue(end_height)
         self.animation.start()
-
-    def switch_view(self):
-        if self.switch_view_action.isChecked():
-            self.stacked_widget.setCurrentWidget(self.advanced_view)
-            self.switch_view_action.setText("Switch to &Simplified View")
-        else:
-            self.stacked_widget.setCurrentWidget(self.simplified_view)
-            self.switch_view_action.setText("Switch to &Advanced View")
 
 def main():
     app = QApplication(sys.argv)
