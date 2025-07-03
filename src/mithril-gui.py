@@ -17,7 +17,7 @@ if sys.platform.startswith("linux"):
     os.environ["QT_QPA_PLATFORM"] = "xcb"
 
 # Directory for bundled icons
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__)) if "__file__" in locals() else os.getcwd()
 ICONS_DIR = os.path.normpath(os.path.join(SCRIPT_DIR, os.pardir, "icons"))
 
 # --- Configuration ---
@@ -74,6 +74,42 @@ class PasswordDialog(QDialog):
         if p1 and p1 == p2:
             return p1
         return None
+
+
+class MountPasswordDialog(QDialog):
+    """A dialog for entering a password to mount a volume."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Password Required")
+        self.setMinimumWidth(400)
+
+        layout = QGridLayout(self)
+        layout.setColumnStretch(1, 1)
+
+        # Row 0: Password
+        layout.addWidget(QLabel("Password:"), 0, 0)
+        self.password_edit = QLineEdit()
+        self.password_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        layout.addWidget(self.password_edit, 0, 1)
+
+        # Row 1: Remember Checkbox
+        self.remember_cb = QCheckBox("Remember password for this session")
+        layout.addWidget(self.remember_cb, 1, 0, 1, 2)
+
+        # Row 2: Dialog Buttons
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box, 2, 0, 1, 2)
+
+        self.password_edit.setFocus()
+
+    def get_password(self):
+        return self.password_edit.text()
+
+    def should_remember(self):
+        return self.remember_cb.isChecked()
+
 
 class VolumeDialog(QDialog):
     """A dialog for adding or editing a volume favorite."""
@@ -403,8 +439,11 @@ class WelcomePage(QWizardPage):
         
         # --- Icon ---
         icon_label = QLabel()
-        pixmap = QPixmap(os.path.join(ICONS_DIR, "icon_128.png"))
-        icon_label.setPixmap(pixmap)
+        # A check for the existence of the icon file
+        icon_path = os.path.join(ICONS_DIR, "icon_128.png")
+        if os.path.exists(icon_path):
+            pixmap = QPixmap(icon_path)
+            icon_label.setPixmap(pixmap)
         icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(icon_label)
 
@@ -425,7 +464,7 @@ class CreateVolumePage(QWizardPage):
         layout = QGridLayout(self)
         layout.setColumnStretch(1, 1)
 
-        self.label_edit = QLineEdit("My First Volume")
+        self.label_edit = QLineEdit("Secure Folder")
         layout.addWidget(QLabel("Volume Label:"), 0, 0)
         layout.addWidget(self.label_edit, 0, 1, 1, 2)
 
@@ -460,6 +499,11 @@ class CreateVolumePage(QWizardPage):
         self.registerField("mountPoint*", self.mount_point_combo, "currentText", self.mount_point_combo.currentTextChanged)
         self.registerField("applyPerms", self.perm_check)
 
+        # Manually connect signals to ensure the page's completeness is re-evaluated
+        self.label_edit.textChanged.connect(self.completeChanged.emit)
+        self.cipher_dir_combo.currentTextChanged.connect(self.completeChanged.emit)
+        self.mount_point_combo.currentTextChanged.connect(self.completeChanged.emit)
+
     def browse_cipher(self):
         path = QFileDialog.getExistingDirectory(self, "Select Encrypted Folder")
         if path:
@@ -469,6 +513,12 @@ class CreateVolumePage(QWizardPage):
         path = QFileDialog.getExistingDirectory(self, "Select Mount Point")
         if path:
             self.mount_point_combo.setCurrentText(path)
+
+    def isComplete(self):
+        # Custom validation logic
+        return bool(self.label_edit.text() and \
+                    self.cipher_dir_combo.currentText() and \
+                    self.mount_point_combo.currentText())
 
 class SuccessPage(QWizardPage):
     def __init__(self, parent=None):
@@ -500,11 +550,13 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("gocryptfs Manager")
         # Set application icon from bundled icons
+        # A check for the existence of the icon file
         if sys.platform.startswith("win"):
             icon_path = os.path.join(ICONS_DIR, "mithril.ico")
         else:
             icon_path = os.path.join(ICONS_DIR, "icon_256.png")
-        self.setWindowIcon(QIcon(icon_path))
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
         self.setMinimumSize(QSize(700, 500))
         self.settings = QSettings(ORGANIZATION_NAME, APPLICATION_NAME)
 
@@ -512,8 +564,13 @@ class MainWindow(QMainWindow):
         self.profiles = {}
         self.current_profile_name = "Default"
         self.mounted_paths = set()
+        self.terminal_started = False
+        self.terminal_process = None
 
-        self._setup_terminal()
+        # The terminal container widget must be created before the main widgets are set up.
+        self.terminal_container = QWidget()
+        self.terminal_container.setFixedHeight(0)
+
         self._setup_main_widgets()
         self._create_actions()
         self._create_menus()
@@ -525,6 +582,13 @@ class MainWindow(QMainWindow):
 
         # Set initial icon based on saved setting
         self.update_tray_icon_color(self.settings.value("use_monochrome_icon", False, type=bool))
+
+    def showEvent(self, event):
+        """Start the terminal process the first time the window is shown."""
+        super().showEvent(event)
+        if not self.terminal_started:
+            self.start_terminal_process()
+            self.terminal_started = True
 
     def _setup_main_widgets(self):
         self.central_widget = QWidget()
@@ -542,19 +606,18 @@ class MainWindow(QMainWindow):
         expanded = self.settings.value("advanced_flags_expanded", False, type=bool)
         self.simplified_view.advanced_group.setChecked(expanded)
 
-    def _setup_terminal(self):
-        self.terminal_container = QWidget()
-        self.terminal_container.setFixedHeight(0)
-        self.terminal_process = None
+    def start_terminal_process(self):
+        """Finds a compatible terminal and starts it embedded in the container widget."""
         shell = os.environ.get('SHELL', 'sh')
 
         # --- Find a suitable terminal emulator ---
         # We search for terminals that are known to support the -into or --embed flag.
-        # Many modern terminals (gnome-terminal, etc.) have removed this feature.
+        # This requires a valid winId(), which is why this is called from showEvent.
+        win_id = self.terminal_container.winId()
         compatible_terminals = {
-            'konsole': ['--nomenubar', '--notabbar', '--noframe', '-e', shell, '--embed', str(int(self.terminal_container.winId()))],
-            'xterm': ['-into', str(int(self.terminal_container.winId())), '-e', shell],
-            'urxvt': ['-embed', str(int(self.terminal_container.winId())), '-e', shell]
+            'konsole': ['--nomenubar', '--notabbar', '--noframe', '-e', shell, '--embed', str(int(win_id))],
+            'xterm': ['-into', str(int(win_id)), '-e', shell],
+            'urxvt': ['-embed', str(int(win_id)), '-e', shell]
         }
 
         terminal_command = None
@@ -735,23 +798,11 @@ class MainWindow(QMainWindow):
                 if self.cached_password:
                     password = self.cached_password.encode('utf-8')
                 else:
-                    dialog = QInputDialog(self)
-                    dialog.setWindowTitle("Password Required")
-                    dialog.setLabelText("Enter password:")
-                    dialog.setTextEchoMode(QLineEdit.EchoMode.Password)
-
-                    layout = dialog.layout()
-                    if not layout:
-                        layout = QVBoxLayout()
-                        dialog.setLayout(layout)
-                    
-                    checkbox = QCheckBox("Remember password for this session", dialog)
-                    layout.addWidget(checkbox, 2, 0, 1, 2)
-
+                    dialog = MountPasswordDialog(self)
                     if dialog.exec() == QDialog.DialogCode.Accepted:
-                        password_str = dialog.textValue()
+                        password_str = dialog.get_password()
                         password = password_str.encode('utf-8')
-                        if checkbox.isChecked():
+                        if dialog.should_remember():
                             self.cached_password = password_str
                     else:
                         self.statusBar().showMessage("Operation cancelled.", 3000)
@@ -871,7 +922,7 @@ class MainWindow(QMainWindow):
     def unmount_volume(self, volume_id):
         volume = self.profiles[self.current_profile_name]["volumes"][volume_id]
         self.run_gocryptfs_command(
-            f"gocryptfs -unmount '{volume['mount_point']}'",
+            f"umount '{volume['mount_point']}'",
             False, f"Unmounted {volume['label']}", self.update_mounted_list
         )
 
@@ -1016,16 +1067,24 @@ class MainWindow(QMainWindow):
         self.update_mounted_list()
 
     def add_volume_to_profile(self, data):
-        if data.get("apply_perms"):
-            try:
-                os.makedirs(data["cipher_dir"], exist_ok=True)
-                os.chmod(data["cipher_dir"], 0o700)
-                os.makedirs(data["mount_point"], exist_ok=True)
-                os.chmod(data["mount_point"], 0o700)
+        try:
+            cipher_dir, mount_point = data["cipher_dir"], data["mount_point"]
+            
+            # The directories must be created for a new volume, regardless of permissions.
+            os.makedirs(cipher_dir, exist_ok=True)
+            os.makedirs(mount_point, exist_ok=True)
+            
+            # Apply strict permissions only if the user checked the box.
+            if data.get("apply_perms"):
+                os.chmod(cipher_dir, 0o700)
+                os.chmod(mount_point, 0o700)
                 self.statusBar().showMessage("Created directories with recommended permissions.", 3000)
-            except Exception as e:
-                QMessageBox.critical(self, "Permissions Error", f"Could not create directories or set permissions: {e}")
-                return
+            else:
+                self.statusBar().showMessage("Created directories.", 3000)
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Permissions Error", f"Could not create directories or set permissions: {e}")
+            return
 
         profile = self.profiles.setdefault(self.current_profile_name, {"volumes": []})
         profile["volumes"].append(data)
@@ -1109,7 +1168,10 @@ class MainWindow(QMainWindow):
         self.animation.start()
 
 def main():
-    app = QApplication(sys.argv)
+    # A check for QApplication instance
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     app.setAttribute(Qt.ApplicationAttribute.AA_DontUseNativeMenuBar, False)
 
@@ -1125,13 +1187,22 @@ def main():
                 "label": wizard.field("volumeLabel"),
                 "cipher_dir": wizard.field("cipherDir"),
                 "mount_point": wizard.field("mountPoint"),
+                "apply_perms": wizard.field("applyPerms")
             }
-            if wizard.field("applyPerms"):
-                try:
-                    os.makedirs(volume_data["cipher_dir"], exist_ok=True, mode=0o700)
-                    os.makedirs(volume_data["mount_point"], exist_ok=True, mode=0o700)
-                except Exception as e:
-                    QMessageBox.critical(None, "Permissions Error", f"Could not create directories or set permissions: {e}")
+            try:
+                cipher_dir = volume_data["cipher_dir"]
+                mount_point = volume_data["mount_point"]
+
+                # Always create directories, then conditionally apply permissions.
+                os.makedirs(cipher_dir, exist_ok=True)
+                os.makedirs(mount_point, exist_ok=True)
+                
+                if wizard.field("applyPerms"):
+                    os.chmod(cipher_dir, 0o700)
+                    os.chmod(mount_point, 0o700)
+                    
+            except Exception as e:
+                QMessageBox.critical(None, "Permissions Error", f"Could not create directories or set permissions: {e}")
 
             profiles = {"Default": {"volumes": [volume_data]}}
             os.makedirs(os.path.dirname(PROFILES_FILE), exist_ok=True)
