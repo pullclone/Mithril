@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
     QDialog, QFormLayout, QLineEdit, QLabel, QDialogButtonBox, QComboBox,
     QListWidgetItem, QCheckBox, QSystemTrayIcon, QMenu, QTextEdit
 )
-from PyQt6.QtCore import QProcess, QSize, Qt, QPropertyAnimation, QEasingCurve, QSettings
+from PyQt6.QtCore import QProcess, QSize, Qt, QPropertyAnimation, QEasingCurve, QSettings, QTimer
 from PyQt6.QtGui import QAction, QIcon
 # Only set Linux-specific Qt platform on Linux
 if sys.platform.startswith("linux"):
@@ -271,20 +271,46 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(self.central_widget)
 
-    def _setup_terminal(self, terminal_emulator='konsole'):
+    def _setup_terminal(self):
         self.terminal_container = QWidget()
         self.terminal_container.setFixedHeight(0)
-        self.terminal_layout = QVBoxLayout(self.terminal_container)
-        self.terminal_layout.setContentsMargins(0, 0, 0, 0)
-
-        self.terminal_process = QProcess(self)
+        self.terminal_process = None
         shell = os.environ.get('SHELL', 'sh')
 
-        if terminal_emulator == 'konsole':
-            self.terminal_process.start("konsole", [
-                "--nomenubar", "--notabbar", "--noframe", "-e", shell,
-                "--embed", str(int(self.terminal_container.winId()))
-            ])
+        # --- Find a suitable terminal emulator ---
+        # We search for terminals that are known to support the -into or --embed flag.
+        # Many modern terminals (gnome-terminal, etc.) have removed this feature.
+        compatible_terminals = {
+            'konsole': ['--nomenubar', '--notabbar', '--noframe', '-e', shell, '--embed', str(int(self.terminal_container.winId()))],
+            'xterm': ['-into', str(int(self.terminal_container.winId())), '-e', shell],
+            'urxvt': ['-embed', str(int(self.terminal_container.winId())), '-e', shell]
+        }
+
+        terminal_command = None
+        found_terminal_name = None
+
+        for name, command in compatible_terminals.items():
+            if subprocess.run(['which', name], capture_output=True, text=True).returncode == 0:
+                terminal_command = command
+                found_terminal_name = name
+                break
+        
+        if not terminal_command:
+            self.statusBar().showMessage("No compatible terminal found (konsole, xterm, or urxvt).", 5000)
+            if hasattr(self, 'toggle_terminal_action'):
+                self.toggle_terminal_action.setEnabled(False)
+            return
+
+        # --- Start the Process ---
+        self.terminal_process = QProcess(self)
+        self.terminal_process.start(found_terminal_name, terminal_command)
+
+        if not self.terminal_process.waitForStarted(2000):
+            self.statusBar().showMessage(f"Failed to start {found_terminal_name}.", 5000)
+            self.terminal_process = None
+            if hasattr(self, 'toggle_terminal_action'):
+                self.toggle_terminal_action.setEnabled(False)
+            return
 
     def _create_actions(self):
         self.quit_action = QAction("&Quit", self)
@@ -368,8 +394,23 @@ class MainWindow(QMainWindow):
                 dialog.setLabelText("Enter password:")
                 dialog.setTextEchoMode(QLineEdit.EchoMode.Password)
 
+                # --- FIX STARTS HERE ---
+                # QInputDialog uses a grid layout by default. We need to get it
+                # and then we can add our own widgets to it.
+                # Find the existing layout on the dialog.
+                layout = dialog.layout()
+                if not layout:
+                    # This is a fallback, but QInputDialog should always have a layout.
+                    layout = QVBoxLayout()
+                    dialog.setLayout(layout)
+                
                 checkbox = QCheckBox("Remember password for this session", dialog)
-                dialog.layout().addWidget(checkbox)
+                
+                # QInputDialog's layout is a QGridLayout. We add the checkbox
+                # on a new row (row 2), spanning both columns (column 0, span 2).
+                # Row 0 is the label, Row 1 is the line edit.
+                layout.addWidget(checkbox, 2, 0, 1, 2)
+                # --- FIX ENDS HERE ---
 
                 if dialog.exec() == QDialog.DialogCode.Accepted:
                     password_str = dialog.textValue()
@@ -420,7 +461,6 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Could not check mounts: {e}", 5000)
 
         self.refresh_volumes_list()
-        self.save_current_profile()
         self.update_tray_menu()
 
     def refresh_volumes_list(self):
@@ -493,17 +533,38 @@ class MainWindow(QMainWindow):
         profile_name = self.simplified_view.profile_combo.currentText()
         if not profile_name: return
 
-        self.profiles[profile_name] = copy.deepcopy(self.profiles.get(self.current_profile_name, {"volumes": []}))
+        # Deep copy to prevent accidental modification of the old profile
+        current_volumes = self.profiles.get(self.current_profile_name, {}).get("volumes", [])
+        self.profiles[profile_name] = {"volumes": copy.deepcopy(current_volumes)}
         self.current_profile_name = profile_name
 
         try:
             with open(PROFILES_FILE, 'w') as f:
                 json.dump(self.profiles, f, indent=4)
-            self.statusBar().showMessage(f"Profile '{profile_name}' saved.", 3000)
+            
+            # --- Visual Feedback ---
+            save_button = self.simplified_view.save_profile_button
+            original_text = " Save"
+            original_icon = QIcon.fromTheme("document-save")
+
+            save_button.setText(" Saved!")
+            save_button.setIcon(QIcon.fromTheme("emblem-ok"))
+            save_button.setEnabled(False)
+
+            # Revert the button back after 2 seconds
+            QTimer.singleShot(2000, lambda: (
+                save_button.setText(original_text),
+                save_button.setIcon(original_icon),
+                save_button.setEnabled(True)
+            ))
+            # --- End Visual Feedback ---
+
             if self.simplified_view.profile_combo.findText(profile_name) == -1:
                 self.simplified_view.profile_combo.addItem(profile_name)
+
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Could not save profiles: {e}")
+            self.statusBar().showMessage("Failed to save profile.", 5000)
 
     def switch_profile(self):
         new_profile = self.simplified_view.profile_combo.currentText()
@@ -547,10 +608,12 @@ class MainWindow(QMainWindow):
         self.save_current_profile()
 
     def update_volume_flags(self, volume_id, flags):
-        if self.current_profile_name in self.profiles and volume_id < len(self.profiles[self.current_profile_name]["volumes"]):
+        if self.current_profile_name in self.profiles and \
+           self.profiles[self.current_profile_name].get("volumes") and \
+           volume_id < len(self.profiles[self.current_profile_name]["volumes"]):
+            
             self.profiles[self.current_profile_name]["volumes"][volume_id]["flags"] = flags
-            # No need to save to disk on every checkmark, we'll save with the profile
-            # self.save_current_profile()
+            self.save_current_profile() # Save changes to flags immediately
 
     # --- Event Handlers and Utils ---
     def closeEvent(self, event):
@@ -597,10 +660,9 @@ def main():
     app.setQuitOnLastWindowClosed(False) # Important for tray icon functionality
     app.setAttribute(Qt.ApplicationAttribute.AA_DontUseNativeMenuBar, False)
 
-    for app_name in ['gocryptfs', 'konsole']:
-        if subprocess.run(['which', app_name], capture_output=True).returncode != 0:
-            QMessageBox.critical(None, "Dependency Error", f"Required app '{app_name}' not found.")
-            sys.exit(1)
+    if subprocess.run(['which', 'gocryptfs'], capture_output=True).returncode != 0:
+        QMessageBox.critical(None, "Dependency Error", "Required app 'gocryptfs' not found.")
+        sys.exit(1)
 
     window = MainWindow()
     window.show()
