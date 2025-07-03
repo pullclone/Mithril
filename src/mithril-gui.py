@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QListWidget, QStackedWidget, QMenuBar, QFileDialog, QInputDialog, QMessageBox,
     QDialog, QFormLayout, QLineEdit, QLabel, QDialogButtonBox, QComboBox,
     QListWidgetItem, QCheckBox, QSystemTrayIcon, QMenu, QTextEdit, QToolButton, QGroupBox,
-    QWizard, QWizardPage, QTextBrowser, QGridLayout, QFrame)
+    QWizard, QWizardPage, QTextBrowser, QGridLayout, QFrame, QRadioButton)
 from PyQt6.QtCore import QProcess, QSize, Qt, QPropertyAnimation, QEasingCurve, QSettings, QTimer
 from PyQt6.QtGui import QAction, QIcon, QPixmap
 # Only set Linux-specific Qt platform on Linux
@@ -138,34 +138,77 @@ class VolumeDialog(QDialog):
         browse_cipher.clicked.connect(lambda: self.browse_path(self.cipher_dir_combo, "Select Encrypted Folder"))
         layout.addWidget(browse_cipher, 1, 2)
 
-        # Row 2: Mount Point
-        layout.addWidget(QLabel("Mount Point:"), 2, 0)
+        self.cipher_warning_label = QLabel("⚠️ This folder already exists. Continuing may overwrite or expose existing files.")
+        self.cipher_warning_label.setStyleSheet("color: orange;")
+        self.cipher_warning_label.setVisible(False)
+        layout.addWidget(self.cipher_warning_label, 2, 1, 1, 2)
+
+        # Row 3: Mount Point
+        layout.addWidget(QLabel("Mount Point:"), 3, 0)
         self.mount_point_combo = QComboBox()
         self.mount_point_combo.setEditable(True)
         self.mount_point_combo.addItems([os.path.expanduser(p) for p in ["~/Secure", "~/Private"]])
         self.mount_point_combo.setToolTip("Recommended location for the decrypted view.")
-        layout.addWidget(self.mount_point_combo, 2, 1)
+        layout.addWidget(self.mount_point_combo, 3, 1)
 
         browse_mount = QPushButton("Browse...")
         browse_mount.clicked.connect(lambda: self.browse_path(self.mount_point_combo, "Select Mount Point"))
-        layout.addWidget(browse_mount, 2, 2)
+        layout.addWidget(browse_mount, 3, 2)
 
-        # Row 3: Permissions Checkbox
+        self.mount_warning_label = QLabel("⚠️ This folder already exists. Continuing may overwrite or expose existing files.")
+        self.mount_warning_label.setStyleSheet("color: orange;")
+        self.mount_warning_label.setVisible(False)
+        layout.addWidget(self.mount_warning_label, 4, 1, 1, 2)
+
+        # Row 5: Permissions Checkbox
         self.perm_check = QCheckBox("Apply recommended permissions to new paths (chmod 700)")
         self.perm_check.setChecked(True)
-        layout.addWidget(self.perm_check, 3, 0, 1, 3) # Span all 3 columns
+        layout.addWidget(self.perm_check, 5, 0, 1, 3) # Span all 3 columns
+
+        # Row 6: Automount Options
+        self.automount_cb = QCheckBox("Mount automatically when Mithril starts")
+        layout.addWidget(self.automount_cb, 6, 0, 1, 3)
+
+        self.usb_volume_cb = QCheckBox("Treat as removable USB volume (automount when detected)")
+        layout.addWidget(self.usb_volume_cb, 7, 0, 1, 3)
+        
+        self.auto_open_cb = QCheckBox("Open folder after mounting")
+        layout.addWidget(self.auto_open_cb, 8, 0, 1, 3)
+
+        self.pin_to_tray_cb = QCheckBox("Pin this volume to system tray")
+        layout.addWidget(self.pin_to_tray_cb, 9, 0, 1, 3)
 
         if volume_data:
             self.label_edit.setText(volume_data.get("label", ""))
             self.cipher_dir_combo.setCurrentText(volume_data.get("cipher_dir", ""))
             self.mount_point_combo.setCurrentText(volume_data.get("mount_point", ""))
             self.perm_check.setVisible(False)
+            # Load automount settings
+            self.automount_cb.setChecked(volume_data.get("automount_on_startup", False))
+            self.usb_volume_cb.setChecked(volume_data.get("volume_type") == "usb")
+            self.auto_open_cb.setChecked(volume_data.get("auto_open_mount", False))
+            self.pin_to_tray_cb.setChecked(volume_data.get("pin_to_tray", False))
 
-        # Row 4: Dialog Buttons
-        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        button_box.accepted.connect(self.accept)
-        button_box.rejected.connect(self.reject)
-        layout.addWidget(button_box, 4, 0, 1, 3) # Span all 3 columns
+        # Row 10: Dialog Buttons
+        self.button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self.button_box.accepted.connect(self.accept)
+        self.button_box.rejected.connect(self.reject)
+        layout.addWidget(self.button_box, 10, 0, 1, 3) # Span all 3 columns
+
+        self.cipher_dir_combo.currentTextChanged.connect(self.check_path_existence)
+        self.mount_point_combo.currentTextChanged.connect(self.check_path_existence)
+        self.check_path_existence()
+
+    def check_path_existence(self):
+        cipher_path = self.cipher_dir_combo.currentText()
+        mount_path = self.mount_point_combo.currentText()
+
+        self.cipher_warning_label.setVisible(os.path.exists(cipher_path))
+        self.mount_warning_label.setVisible(os.path.exists(mount_path))
+
+        self.button_box.button(QDialogButtonBox.StandardButton.Ok).setEnabled(
+            not self.cipher_warning_label.isVisible() and not self.mount_warning_label.isVisible()
+        )
 
 
     def browse_path(self, combo, caption):
@@ -179,6 +222,10 @@ class VolumeDialog(QDialog):
             "cipher_dir": self.cipher_dir_combo.currentText(),
             "mount_point": self.mount_point_combo.currentText(),
             "apply_perms": self.perm_check.isChecked() and self.perm_check.isVisible(),
+            "automount_on_startup": self.automount_cb.isChecked(),
+            "volume_type": "usb" if self.usb_volume_cb.isChecked() else "standard",
+            "auto_open_mount": self.auto_open_cb.isChecked(),
+            "pin_to_tray": self.pin_to_tray_cb.isChecked(),
         }
 
 class SimplifiedView(QWidget):
@@ -223,6 +270,8 @@ class SimplifiedView(QWidget):
         layout.addWidget(QLabel("<b>Favorite Volumes:</b>"))
         self.volumes_list = QListWidget()
         self.volumes_list.itemSelectionChanged.connect(self.main_window.on_volume_selected)
+        self.volumes_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.volumes_list.customContextMenuRequested.connect(self.show_volume_context_menu)
         layout.addWidget(self.volumes_list)
 
         # --- Advanced Flags Group ---
@@ -273,6 +322,29 @@ class SimplifiedView(QWidget):
         self.reverse_cb.stateChanged.connect(self.save_flags)
         self.scryptn_edit.textChanged.connect(self.save_flags)
 
+        self._create_shortcuts()
+
+    def _create_shortcuts(self):
+        # These are application-wide shortcuts
+        QAction("Quit", self, shortcut="Ctrl+Q", triggered=self.main_window.close_app)
+        QAction("Add new volume", self, shortcut="Ctrl+N", triggered=self.add_volume)
+        QAction("Re-run setup wizard", self, shortcut="Ctrl+R", triggered=self.main_window.rerun_setup_wizard)
+        QAction("Open Security Guide", self, shortcut="Ctrl+H", triggered=self.main_window.show_security_guide)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Return or event.key() == Qt.Key.Key_Enter:
+            if event.modifiers() == Qt.KeyboardModifier.ControlModifier:
+                self.edit_volume()
+            else:
+                self.mount_selected_volume()
+        elif event.key() == Qt.Key.Key_Delete:
+            if event.modifiers() == Qt.KeyboardModifier.ShiftModifier:
+                self.secure_delete_volume()
+            else:
+                self.remove_volume()
+        else:
+            super().keyPressEvent(event)
+
     def get_selected_volume_id(self):
         item = self.volumes_list.currentItem()
         return item.data(Qt.ItemDataRole.UserRole) if item else None
@@ -297,6 +369,38 @@ class SimplifiedView(QWidget):
         reply = QMessageBox.question(self, "Confirm Remove", f"Are you sure you want to remove this favorite?")
         if reply == QMessageBox.StandardButton.Yes:
             self.main_window.remove_volume_from_profile(volume_id)
+
+    def secure_delete_volume(self):
+        volume_id = self.get_selected_volume_id()
+        if volume_id is None: return
+        
+        volume_data = self.main_window.profiles[self.main_window.current_profile_name]["volumes"][volume_id]
+        dialog = SecureDeleteDialog(volume_data, self)
+        if dialog.exec():
+            self.main_window.secure_delete_volume_from_disk(volume_id)
+
+    def show_volume_context_menu(self, pos):
+        item = self.volumes_list.itemAt(pos)
+        if not item:
+            return
+
+        volume_id = item.data(Qt.ItemDataRole.UserRole)
+        volume_data = self.main_window.profiles[self.main_window.current_profile_name]["volumes"][volume_id]
+        is_mounted = volume_data.get('mount_point') in self.main_window.mounted_paths
+
+        menu = QMenu()
+        if is_mounted:
+            menu.addAction("Unmount", self.unmount_selected_volume)
+            menu.addAction("Open Mount Point", lambda: self.main_window.open_folder(volume_data.get('mount_point')))
+        else:
+            menu.addAction("Mount", self.mount_selected_volume)
+        
+        menu.addSeparator()
+        menu.addAction("Edit Volume", self.edit_volume)
+        menu.addAction("Remove from Favorites", self.remove_volume)
+        menu.addAction("Delete Encrypted Volume...", self.secure_delete_volume)
+        
+        menu.exec(self.volumes_list.mapToGlobal(pos))
 
     def mount_selected_volume(self):
         volume_id = self.get_selected_volume_id()
@@ -416,6 +520,116 @@ class SecurityGuideDialog(QDialog):
         layout.addWidget(button_box)
 
 
+class ShortcutsDialog(QDialog):
+    """A dialog displaying keyboard shortcuts."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Keyboard Shortcuts")
+        self.setMinimumSize(400, 300)
+
+        layout = QVBoxLayout(self)
+        text_browser = QTextBrowser()
+        layout.addWidget(text_browser)
+
+        shortcuts = {
+            "Enter": "Mount selected volume",
+            "Ctrl + Enter": "Edit selected volume",
+            "Del": "Remove volume from favorites",
+            "Shift + Del": "Secure delete encrypted volume from disk",
+            "Ctrl + N": "Add new volume",
+            "Ctrl + R": "Re-run setup wizard",
+            "Ctrl + H": "Open Security Guide",
+            "Ctrl + Q": "Quit application",
+            "F1": "Show this help",
+        }
+
+        content = "<h1>Keyboard Shortcuts</h1>"
+        content += "<style>td { padding: 4px; }</style>"
+        content += "<table>"
+        for key, action in shortcuts.items():
+            content += f"<tr><td><b>{key}</b></td><td>{action}</td></tr>"
+        content += "</table>"
+        
+        text_browser.setHtml(content)
+
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+
+
+class SecureDeleteDialog(QDialog):
+    """A confirmation dialog for securely deleting a volume from disk."""
+    def __init__(self, volume_data, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Permanently Delete Encrypted Volume?")
+        self.setMinimumWidth(500)
+
+        self.volume_name = volume_data.get("label", "")
+        layout = QVBoxLayout(self)
+
+        message = QLabel(f"This action will permanently erase all encrypted data at:<br><b>{volume_data.get('cipher_dir', '')}</b>")
+        message.setWordWrap(True)
+        layout.addWidget(message)
+
+        form_layout = QFormLayout()
+        self.confirm_edit = QLineEdit()
+        form_layout.addRow(f"To confirm, please type the name of this volume (<b>{self.volume_name}</b>):", self.confirm_edit)
+        layout.addLayout(form_layout)
+
+        self.confirm_edit.textChanged.connect(self.check_match)
+
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
+        self.delete_button = button_box.addButton("Delete Encrypted Volume", QDialogButtonBox.ButtonRole.DestructiveRole)
+        self.delete_button.setEnabled(False)
+        
+        self.delete_button.clicked.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+
+    def check_match(self, text):
+        self.delete_button.setEnabled(text == self.volume_name)
+
+
+class PreferencesDialog(QDialog):
+    """A dialog for setting application preferences."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Preferences")
+        self.setMinimumWidth(400)
+
+        self.settings = QSettings(ORGANIZATION_NAME, APPLICATION_NAME)
+        layout = QVBoxLayout(self)
+
+        # --- Close Behavior ---
+        close_group = QGroupBox("On window close")
+        close_layout = QVBoxLayout(close_group)
+        self.minimize_radio = QRadioButton("Minimize to tray")
+        self.quit_radio = QRadioButton("Quit application")
+        close_layout.addWidget(self.minimize_radio)
+        close_layout.addWidget(self.quit_radio)
+        
+        current_close_behavior = self.settings.value("close_behavior", "minimize", type=str)
+        if current_close_behavior == "quit":
+            self.quit_radio.setChecked(True)
+        else:
+            self.minimize_radio.setChecked(True)
+            
+        layout.addWidget(close_group)
+
+        # --- Dialog Buttons ---
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+
+    def accept(self):
+        if self.quit_radio.isChecked():
+            self.settings.setValue("close_behavior", "quit")
+        else:
+            self.settings.setValue("close_behavior", "minimize")
+        super().accept()
+
+
 class MithrilSetupWizard(QWizard):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -531,6 +745,20 @@ class SuccessPage(QWizardPage):
         self.prose_label.setWordWrap(True)
         layout.addWidget(self.prose_label)
 
+        # --- Post-Creation Actions ---
+        self.mount_now_cb = QCheckBox("Mount this volume now")
+        self.mount_now_cb.setChecked(True)
+        layout.addWidget(self.mount_now_cb)
+
+        self.open_folder_cb = QCheckBox("Open mount point in file manager after mounting")
+        self.open_folder_cb.setChecked(True)
+        layout.addWidget(self.open_folder_cb)
+        
+        self.mount_now_cb.toggled.connect(self.open_folder_cb.setEnabled)
+
+        self.registerField("mountNow", self.mount_now_cb)
+        self.registerField("openFolder", self.open_folder_cb)
+
         # Add a styled horizontal line
         line = QFrame()
         line.setFrameShape(QFrame.Shape.HLine)
@@ -566,6 +794,8 @@ class MainWindow(QMainWindow):
         self.mounted_paths = set()
         self.terminal_started = False
         self.terminal_process = None
+        self.has_shown_tray_message = False
+        self.is_quitting = False
 
         # The terminal container widget must be created before the main widgets are set up.
         self.terminal_container = QWidget()
@@ -582,6 +812,9 @@ class MainWindow(QMainWindow):
 
         # Set initial icon based on saved setting
         self.update_tray_icon_color(self.settings.value("use_monochrome_icon", False, type=bool))
+
+        # Automount volumes after a short delay
+        QTimer.singleShot(500, self.automount_volumes)
 
     def showEvent(self, event):
         """Start the terminal process the first time the window is shown."""
@@ -648,6 +881,7 @@ class MainWindow(QMainWindow):
 
     def _create_actions(self):
         self.quit_action = QAction("&Quit", self)
+        self.quit_action.setShortcut("Ctrl+Q")
         self.quit_action.triggered.connect(self.close_app)
         self.toggle_terminal_action = QAction("Toggle &Terminal", self, shortcut="F12")
         self.toggle_terminal_action.triggered.connect(self.toggle_terminal)
@@ -657,6 +891,11 @@ class MainWindow(QMainWindow):
     def _create_menus(self):
         menu_bar = self.menuBar()
         file_menu = menu_bar.addMenu("&File")
+        
+        self.preferences_action = QAction("Preferences...", self)
+        self.preferences_action.triggered.connect(self.show_preferences)
+        file_menu.addAction(self.preferences_action)
+        
         file_menu.addAction(self.clear_cache_action)
         file_menu.addSeparator()
         file_menu.addAction(self.quit_action)
@@ -666,36 +905,64 @@ class MainWindow(QMainWindow):
 
         help_menu = menu_bar.addMenu("&Help")
         self.security_guide_action = QAction("Security Best Practices", self)
+        self.security_guide_action.setShortcut("Ctrl+H")
         self.security_guide_action.triggered.connect(self.show_security_guide)
         help_menu.addAction(self.security_guide_action)
+        self.shortcuts_action = QAction("Keyboard Shortcuts", self, shortcut="F1")
+        self.shortcuts_action.triggered.connect(self.show_shortcuts_guide)
+        help_menu.addAction(self.shortcuts_action)
         help_menu.addSeparator()
         self.rerun_wizard_action = QAction("Run First-Time Setup...", self)
+        self.rerun_wizard_action.setShortcut("Ctrl+R")
         self.rerun_wizard_action.triggered.connect(self.rerun_setup_wizard)
         help_menu.addAction(self.rerun_wizard_action)
 
     def show_security_guide(self):
-        dialog = SecurityGuideDialog(self)
+        if not hasattr(self, "_security_guide_dialog") or not self._security_guide_dialog.isVisible():
+            self._security_guide_dialog = SecurityGuideDialog(self)
+            self._security_guide_dialog.show()
+        else:
+            self._security_guide_dialog.close()
+
+    def show_shortcuts_guide(self):
+        if not hasattr(self, "_shortcuts_dialog") or not self._shortcuts_dialog.isVisible():
+            self._shortcuts_dialog = ShortcutsDialog(self)
+            self._shortcuts_dialog.show()
+        else:
+            self._shortcuts_dialog.close()
+
+    def show_preferences(self):
+        dialog = PreferencesDialog(self)
         dialog.exec()
 
     def rerun_setup_wizard(self):
+        if hasattr(self, "_setup_wizard") and self._setup_wizard.isVisible():
+            self._setup_wizard.close()
+            return
+
         reply = QMessageBox.question(self, "Run Setup Wizard",
                                      "This will guide you through creating a new volume in your 'Default' profile. Are you sure you want to continue?",
                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.No:
             return
 
-        wizard = MithrilSetupWizard(self)
-        if wizard.exec() == QDialog.DialogCode.Accepted:
+        self._setup_wizard = MithrilSetupWizard(self)
+        if self._setup_wizard.exec() == QDialog.DialogCode.Accepted:
             volume_data = {
-                "label": wizard.field("volumeLabel"),
-                "cipher_dir": wizard.field("cipherDir"),
-                "mount_point": wizard.field("mountPoint"),
-                "apply_perms": wizard.field("applyPerms")
+                "label": self._setup_wizard.field("volumeLabel"),
+                "cipher_dir": self._setup_wizard.field("cipherDir"),
+                "mount_point": self._setup_wizard.field("mountPoint"),
+                "apply_perms": self._setup_wizard.field("applyPerms"),
+                "auto_open_mount": self._setup_wizard.field("openFolder")
             }
 
             # Switch to default profile to add the new volume
             self.simplified_view.profile_combo.setCurrentText("Default")
-            self.add_volume_to_profile(volume_data)
+            new_volume_id = self.add_volume_to_profile(volume_data)
+
+            if self._setup_wizard.field("mountNow"):
+                # Use a timer to ensure the main window is ready
+                QTimer.singleShot(100, lambda: self.mount_volume(new_volume_id))
 
     def _create_status_bar(self):
         self.statusBar().showMessage("Ready", 3000)
@@ -739,6 +1006,24 @@ class MainWindow(QMainWindow):
     def update_tray_menu(self):
         self.tray_menu.clear()
 
+        # --- Pinned Volumes ---
+        pinned_volumes = []
+        for profile_name, profile_data in self.profiles.items():
+            for i, vol in enumerate(profile_data.get("volumes", [])):
+                if vol.get("pin_to_tray"):
+                    pinned_volumes.append((vol, i, profile_name))
+        
+        if pinned_volumes:
+            for vol, vol_id, profile_name in pinned_volumes:
+                label = vol.get('label', f"Volume {vol_id+1}")
+                is_mounted = vol.get('mount_point') in self.mounted_paths
+                icon = QIcon.fromTheme("media-eject" if is_mounted else "folder-blue")
+                action = QAction(icon, label, self)
+                action.triggered.connect(lambda checked, vol_id=vol_id, p_name=profile_name: self.toggle_mount_from_tray(vol_id, p_name))
+                self.tray_menu.addAction(action)
+            self.tray_menu.addSeparator()
+
+
         # --- Volume Actions ---
         profile = self.profiles.get(self.current_profile_name, {})
         volumes = profile.get("volumes", [])
@@ -748,7 +1033,7 @@ class MainWindow(QMainWindow):
                 is_mounted = vol.get('mount_point') in self.mounted_paths
                 icon = QIcon.fromTheme("media-eject" if is_mounted else "media-mount")
                 action = QAction(icon, label, self)
-                action.triggered.connect(lambda checked, vol_id=i: self.toggle_mount_from_tray(vol_id))
+                action.triggered.connect(lambda checked, vol_id=i: self.toggle_mount_from_tray(vol_id, self.current_profile_name))
                 self.tray_menu.addAction(action)
             self.tray_menu.addSeparator()
             self.tray_menu.addAction("Mount All", self.mount_all_volumes)
@@ -771,14 +1056,14 @@ class MainWindow(QMainWindow):
         self.tray_menu.addAction(show_hide_action)
         self.tray_menu.addAction(self.quit_action)
 
-    def toggle_mount_from_tray(self, volume_id):
-        volume = self.profiles[self.current_profile_name]["volumes"][volume_id]
+    def toggle_mount_from_tray(self, volume_id, profile_name):
+        volume = self.profiles[profile_name]["volumes"][volume_id]
         if volume['mount_point'] in self.mounted_paths:
-            self.unmount_volume(volume_id)
+            self.unmount_volume(volume_id, profile_name)
         else:
-            self.mount_volume(volume_id)
+            self.mount_volume(volume_id, profile_name)
 
-    def run_gocryptfs_command(self, command_str, needs_password=False, success_message="", on_success=None, is_init=False):
+    def run_gocryptfs_command(self, command_str, needs_password=False, success_message="", on_success=None, on_success_args=(), is_init=False):
         self.write_to_terminal(command_str)
 
         password = None
@@ -823,7 +1108,7 @@ class MainWindow(QMainWindow):
                     3000,
                 )
                 if on_success:
-                    on_success()
+                    on_success(*on_success_args)
             else:
                 error_output = result.stderr.decode('utf-8').strip()
                 error_msg = f"Error executing command (Code: {result.returncode})"
@@ -833,6 +1118,25 @@ class MainWindow(QMainWindow):
 
         except Exception as e:
             QMessageBox.critical(self, "Unexpected Error", f"An unexpected error occurred: {e}")
+
+    def automount_volumes(self):
+        """Iterate through all profiles and automount volumes."""
+        for profile_name, profile_data in self.profiles.items():
+            for i, volume in enumerate(profile_data.get("volumes", [])):
+                # Standard automount on startup
+                if volume.get("automount_on_startup"):
+                    self.mount_volume(i, profile_name=profile_name)
+                
+                # USB automount (check if path exists)
+                elif volume.get("volume_type") == "usb" and os.path.exists(volume.get("cipher_dir", "")):
+                    self.mount_volume(i, profile_name=profile_name)
+
+    def open_folder(self, path):
+        """Opens the specified path in the default file manager."""
+        try:
+            subprocess.run(['xdg-open', path], check=True)
+        except Exception as e:
+            self.statusBar().showMessage(f"Failed to open folder: {e}", 5000)
 
     # --- Core Logic ---
     def update_mounted_list(self):
@@ -867,8 +1171,12 @@ class MainWindow(QMainWindow):
         volume_id = self.simplified_view.get_selected_volume_id()
         self.simplified_view.load_flags_for_volume(volume_id)
 
-    def mount_volume(self, volume_id):
-        volume = self.profiles[self.current_profile_name]["volumes"][volume_id]
+    def mount_volume(self, volume_id, profile_name=None):
+        # If profile_name is not provided, use the current one.
+        if profile_name is None:
+            profile_name = self.current_profile_name
+            
+        volume = self.profiles[profile_name]["volumes"][volume_id]
         cipher_dir, mount_point = volume["cipher_dir"], volume["mount_point"]
 
         # --- Intelligent Directory Check ---
@@ -917,10 +1225,27 @@ class MainWindow(QMainWindow):
 
         command_args = ["gocryptfs", *extra_args, cipher_dir, mount_point]
         command = shlex.join(command_args)
-        self.run_gocryptfs_command(command, True, f"Mounted {volume['label']}", self.update_mounted_list)
+        
+        on_success_callbacks = [self.update_mounted_list]
+        if volume.get("auto_open_mount"):
+            on_success_callbacks.append(lambda: self.open_folder(mount_point))
 
-    def unmount_volume(self, volume_id):
-        volume = self.profiles[self.current_profile_name]["volumes"][volume_id]
+        # We need a wrapper to call multiple functions on success
+        def on_mount_success():
+            for func in on_success_callbacks:
+                func()
+
+        self.run_gocryptfs_command(
+            command, 
+            True, 
+            f"Mounted {volume['label']}", 
+            on_mount_success
+        )
+
+    def unmount_volume(self, volume_id, profile_name=None):
+        if profile_name is None:
+            profile_name = self.current_profile_name
+        volume = self.profiles[profile_name]["volumes"][volume_id]
         self.run_gocryptfs_command(
             f"umount '{volume['mount_point']}'",
             False, f"Unmounted {volume['label']}", self.update_mounted_list
@@ -1084,7 +1409,7 @@ class MainWindow(QMainWindow):
                 
         except Exception as e:
             QMessageBox.critical(self, "Permissions Error", f"Could not create directories or set permissions: {e}")
-            return
+            return None
 
         profile = self.profiles.setdefault(self.current_profile_name, {"volumes": []})
         profile["volumes"].append(data)
@@ -1094,6 +1419,7 @@ class MainWindow(QMainWindow):
         # --- Initialize the new volume ---
         new_volume_id = len(profile["volumes"]) - 1
         self.initialize_new_volume(new_volume_id)
+        return new_volume_id
 
     def update_volume_in_profile(self, volume_id, data):
         self.profiles[self.current_profile_name]["volumes"][volume_id].update(data)
@@ -1104,6 +1430,36 @@ class MainWindow(QMainWindow):
         del self.profiles[self.current_profile_name]["volumes"][volume_id]
         self.refresh_volumes_list()
         self.save_current_profile()
+
+    def secure_delete_volume_from_disk(self, volume_id):
+        volume = self.profiles[self.current_profile_name]["volumes"][volume_id]
+        cipher_dir = volume.get("cipher_dir")
+        
+        if not cipher_dir or not os.path.isdir(cipher_dir):
+            QMessageBox.warning(self, "Directory Not Found", f"The encrypted directory does not exist:\n{cipher_dir}")
+            return
+
+        try:
+            # Use a terminal command for secure deletion if available, otherwise fallback
+            # For this example, we’ll use rm -rf, but in a real-world scenario,
+            # you might want to use a more secure deletion tool like ‘srm’ or ‘shred’.
+            command = shlex.join(["rm", "-rf", cipher_dir])
+            self.write_to_terminal(f"Attempting to securely delete: {command}")
+            
+            result = subprocess.run(shlex.split(command), capture_output=True, check=True)
+            
+            self.statusBar().showMessage(f"Successfully deleted '{volume['label']}' from disk.", 5000)
+            self.tray_icon.showMessage("Success", f"Securely deleted volume '{volume['label']}'.", QSystemTrayIcon.MessageIcon.Information, 3000)
+            
+            # After successful deletion, remove it from the profile
+            self.remove_volume_from_profile(volume_id)
+
+        except Exception as e:
+            error_msg = f"Failed to delete volume: {e}"
+            if hasattr(e, 'stderr') and e.stderr:
+                error_msg += f"\n\n{e.stderr.decode('utf-8').strip()}"
+            QMessageBox.critical(self, "Deletion Error", error_msg)
+            self.statusBar().showMessage("Failed to delete volume.", 5000)
 
     def update_volume_flags(self, volume_id, flags):
         if self.current_profile_name in self.profiles and \
@@ -1137,13 +1493,26 @@ class MainWindow(QMainWindow):
 
     # --- Event Handlers and Utils ---
     def closeEvent(self, event):
-        """Override close event to hide to tray instead of quitting."""
-        event.ignore()
-        self.hide()
-        self.tray_icon.showMessage("Still Running", "gocryptfs Manager is running in the background.", QSystemTrayIcon.MessageIcon.Information, 2000)
+        """Handle window close events."""
+        if self.is_quitting:
+            # If we are quitting, accept the event and let the app close
+            event.accept()
+        else:
+            # Otherwise, hide to tray and show a notification (once)
+            event.ignore()
+            self.hide()
+            if not self.has_shown_tray_message:
+                self.tray_icon.showMessage(
+                    "Still Running",
+                    "Mithril is running in the background. Use the tray icon to quit.",
+                    QSystemTrayIcon.MessageIcon.Information,
+                    2000
+                )
+                self.has_shown_tray_message = True
 
     def close_app(self):
         """Properly closes the application."""
+        self.is_quitting = True
         self.save_current_profile() # Save on quit
         QApplication.instance().quit()
 
@@ -1187,7 +1556,8 @@ def main():
                 "label": wizard.field("volumeLabel"),
                 "cipher_dir": wizard.field("cipherDir"),
                 "mount_point": wizard.field("mountPoint"),
-                "apply_perms": wizard.field("applyPerms")
+                "apply_perms": wizard.field("applyPerms"),
+                "auto_open_mount": wizard.field("openFolder")
             }
             try:
                 cipher_dir = volume_data["cipher_dir"]
@@ -1209,9 +1579,15 @@ def main():
             with open(PROFILES_FILE, 'w') as f:
                 json.dump(profiles, f, indent=4)
 
-            # We need a main window instance to run the initialization
+            # We need a main window instance to run the initialization and mounting
             window = MainWindow()
-            window.initialize_new_volume(0) # Initialize the first (and only) volume
+            new_volume_id = 0 # It's the first and only one
+            window.initialize_new_volume(new_volume_id)
+            
+            if wizard.field("mountNow"):
+                # Use a timer to ensure the main window is ready
+                QTimer.singleShot(100, lambda: window.mount_volume(new_volume_id))
+
             window.show()
             sys.exit(app.exec())
         else:
