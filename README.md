@@ -10,7 +10,7 @@
 - System tray integration for quick access
 - Lightweight and secure
 
-  <img src="./Mithril_Software.png" width="90%">
+<img src="./Mithril_Software.png" width="90%">
 
 > *(This project is unrelated to Mithril.js.)*
 
