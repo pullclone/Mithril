@@ -10,6 +10,8 @@
 - System tray integration for quick access
 - Lightweight and secure
 
+- <img src="./Mithril_Program.png" width="65%">
+
 > *(This project is unrelated to Mithril.js.)*
 
 Licensed under the MIT License.
