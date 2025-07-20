@@ -37,23 +37,9 @@ Mithril supports advanced encryption strategies for the following ethical purpos
 > 
 > <br>
 
-Thoughtful and ethical computer use is at the root of the Linux system — guided by a tradition of making a personal commitment to deliberate standards of integrity in the operation of your machine. Whether your personal desktop computer, your mobile device, or as one of multitude who can count themselves among the designers, operators and implementors of various Linux systems from the security systems that keep your household safe to medical imaging equipment to nuclear submarines and space ships: 
-| --- | --- | --- |
-| Android Mobile OS | Web Servers | Medical Imaging Equipment |
-| Consumer Devices | Cloud Computing Platforms | Patient Monitoring Systems |
-| Internet Infrastructure | Apple's Infrastructure | In-vitro Diagnostics (IVD) |
-| Home Routers | Smart Home Hubs | Infusion Pumps |
-| Smart TVs | Smart Home Appliances | Electronic Health Record Systems |
-| Car Infotainment Systems | Wearable Technology | Hospital IT Infrastructure |
-| Network-Attached Storage | Digital Video Recorders (DVRs) | Genomics and Bioinformatics |
-| IP Cameras | Network Video Recorders (NVRs) | Drug Discovery and Molecular Modeling |
-| Security Cameras | Video Doorbells | Cryo-Electron Microscopy (Cryo-EM) |
-| Intercom Systems | Alarm Systems | Military Submarines and Naval Systems |
-| Point of Sale Systems | Home Automation | Unmanned Aerial Vehicles (UAVs) |
-| Banking ATMs | Home Routers | Military Command and Control Systems |
-| Core Banking Infrastructure | Air Traffic Control Systems | NASA and International Space Station |
-| Stock Exchanges | Small Satellites | SpaceX Falcon 9 / Dragon |
-| CubeSats | Flight Simulators | Mars Rovers |
+Thoughtful and ethical computer use is at the root of the Linux system — guided by a tradition of making a personal commitment to deliberate standards of integrity in the operation of your machine. Whether your personal desktop computer, your mobile device, or as one of multitude who can count themselves among the designers, operators and implementors of various Linux systems from the security systems that keep your household safe to medical imaging equipment to nuclear submarines and space ships:
+
+| Android Mobile OS | Web Servers | Medical Imaging Equipment | Consumer Devices | Cloud Computing Platforms | Patient Monitoring Systems | Internet Infrastructure | Apple's Infrastructure | In-vitro Diagnostics (IVD) | Home Routers | Smart Home Hubs | Infusion Pumps | Smart TVs | Smart Home Appliances | Electronic Health Record Systems | Car Infotainment Systems | Wearable Technology | Hospital IT Infrastructure | Network-Attached Storage | Digital Video Recorders (DVRs) | Genomics and Bioinformatics | IP Cameras | Network Video Recorders (NVRs) | Drug Discovery and Molecular Modeling | Security Cameras | Video Doorbells | Cryo-Electron Microscopy (Cryo-EM) | Intercom Systems | Alarm Systems | Military Submarines and Naval Systems | Point of Sale Systems | Home Automation | Unmanned Aerial Vehicles (UAVs) | Banking ATMs | Home Routers | Military Command and Control Systems | Core Banking Infrastructure | Air Traffic Control Systems | NASA and International Space Station | Stock Exchanges | Small Satellites | SpaceX Falcon 9 / Dragon | CubeSats | Flight Simulators | Mars Rovers |
 
 ### 4\. **Encrypted Does Not Mean Invisible**
 
