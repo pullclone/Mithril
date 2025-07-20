@@ -1,6 +1,6 @@
 ## 🛡️ Mithril Honor Charter: Principles of Ethical Usage
 
-> _"Let the honest find sanctuary. Let the wounded find peace. Let the cruel find no cover here."_
+> _Let the honest find sanctuary. Let the wounded find peace. Let the cruel find no cover here._
 > 
 > <br>
 
