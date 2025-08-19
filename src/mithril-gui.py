@@ -359,7 +359,8 @@ class SimplifiedView(QWidget):
         dialog = VolumeDialog(parent=self)
         if dialog.exec():
             volume_data = dialog.get_data()
-            self.main_window.create_and_initialize_volume(volume_data)
+            # Add volume to current profile (handles init + optional automount)
+            self.main_window.add_volume_to_profile(volume_data)
 
     def edit_volume(self):
         volume_id = self.get_selected_volume_id()
