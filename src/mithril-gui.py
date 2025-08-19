@@ -1136,8 +1136,7 @@ class MainWindow(QMainWindow):
             self.mount_volume(volume_id, profile_name)
 
     def run_gocryptfs_command(self, command_str, needs_password=False, success_message="", on_success=None, on_success_args=(), is_init=False, volume_id=None, profile_name=None):
-        self.write_to_terminal(command_str)
-
+        # Run external command asynchronously to keep UI responsive.
         password = None
         if needs_password:
             if is_init:
@@ -1166,46 +1165,68 @@ class MainWindow(QMainWindow):
                         return
 
         try:
-            command_args = shlex.split(command_str)
-            # Build stdin data for gocryptfs
-            input_data = None
-            if needs_password and password is not None:
-                if is_init:
-                    # gocryptfs -init prompts twice; pass two lines
-                    input_data = password + b"\n" + password + b"\n"
+            parts = shlex.split(command_str)
+            program, args = parts[0], parts[1:]
+
+            proc = QProcess(self)
+            # Keep a reference to avoid GC
+            if not hasattr(self, "_procs"):
+                self._procs = []
+            self._procs.append(proc)
+
+            def handle_finished(exit_code, exit_status):
+                try:
+                    stderr_text = bytes(proc.readAllStandardError()).decode('utf-8', errors='replace').strip()
+                except Exception:
+                    stderr_text = ''
+
+                # Remove from tracking
+                try:
+                    self._procs.remove(proc)
+                except Exception:
+                    pass
+
+                if exit_code == 0:
+                    self.statusBar().showMessage(success_message, 5000)
+                    self.tray_icon.showMessage(
+                        "Success",
+                        success_message,
+                        QSystemTrayIcon.MessageIcon.Information,
+                        3000,
+                    )
+                    if on_success:
+                        on_success(*on_success_args)
                 else:
-                    input_data = password + b"\n"
+                    # Password retry flow
+                    if "password incorrect" in stderr_text.lower() and volume_id is not None:
+                        self.cached_password = None
+                        dialog = MountPasswordDialog(self, show_error=True)
+                        if dialog.exec() == QDialog.DialogCode.Accepted:
+                            self.mount_volume(volume_id, profile_name)
+                        return
 
-            result = subprocess.run(
-                command_args, input=input_data, capture_output=True, check=False
-            )
+                    error_msg = f"Error executing command (Code: {exit_code})"
+                    self.statusBar().showMessage(error_msg, 8000)
+                    error_dialog = ErrorDialog(error_msg, stderr_text, self)
+                    error_dialog.exec()
 
-            if result.returncode == 0:
-                self.statusBar().showMessage(success_message, 5000)
-                self.tray_icon.showMessage(
-                    "Success",
-                    success_message,
-                    QSystemTrayIcon.MessageIcon.Information,
-                    3000,
-                )
-                if on_success:
-                    on_success(*on_success_args)
-            else:
-                error_output = result.stderr.decode('utf-8').strip()
-                # --- Better Password Handling ---
-                if "password incorrect" in error_output.lower() and volume_id is not None:
-                    self.cached_password = None # Clear incorrect cached password
-                    dialog = MountPasswordDialog(self, show_error=True)
-                    if dialog.exec() == QDialog.DialogCode.Accepted:
-                        # Retry mounting with the new password
-                        self.mount_volume(volume_id, profile_name)
-                    return # Stop further error processing
+            proc.finished.connect(handle_finished)
 
-                error_msg = f"Error executing command (Code: {result.returncode})"
-                self.statusBar().showMessage(error_msg, 8000)
-                error_dialog = ErrorDialog(error_msg, error_output, self)
-                error_dialog.exec()
+            # Start the process and feed stdin
+            proc.start(program, args)
 
+            def handle_started():
+                try:
+                    if needs_password and password is not None:
+                        if is_init:
+                            proc.write(password + b"\n" + password + b"\n")
+                        else:
+                            proc.write(password + b"\n")
+                    proc.closeWriteChannel()
+                except Exception:
+                    pass
+
+            proc.started.connect(handle_started)
         except Exception as e:
             QMessageBox.critical(self, "Unexpected Error", f"An unexpected error occurred: {e}")
 
@@ -1678,12 +1699,8 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Session password cache cleared.", 3000)
 
     def write_to_terminal(self, command_str):
-        """Write a command string to the embedded terminal."""
-        if hasattr(self, "terminal_process") and self.terminal_process is not None:
-            try:
-                self.terminal_process.write((command_str + "\n").encode())
-            except Exception:
-                pass
+        """Deprecated: commands are no longer echoed to embedded terminals."""
+        return
 
     # --- Toggles ---
     def toggle_terminal(self):
