@@ -2,6 +2,7 @@ import sys
 import os
 import json
 import subprocess
+import shutil
 import shlex
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
@@ -1339,8 +1340,18 @@ class MainWindow(QMainWindow):
         if profile_name is None:
             profile_name = self.current_profile_name
         volume = self.profiles[profile_name]["volumes"][volume_id]
+        mount_point = volume['mount_point']
+        # Prefer fusermount3/fusermount for FUSE unmounts
+        umount_cmd = None
+        for candidate in ("fusermount3", "fusermount"):
+            if shutil.which(candidate):
+                umount_cmd = f"{candidate} -u {shlex.quote(mount_point)}"
+                break
+        if not umount_cmd:
+            umount_cmd = f"umount {shlex.quote(mount_point)}"
+
         self.run_gocryptfs_command(
-            f"umount '{volume['mount_point']}'",
+            umount_cmd,
             False, f"Unmounted {volume['label']}", self.update_mounted_list
         )
 
