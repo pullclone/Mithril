@@ -206,15 +206,34 @@ class VolumeDialog(QDialog):
         self.check_path_existence()
 
     def check_path_existence(self):
-        cipher_path = self.cipher_dir_combo.currentText()
-        mount_path = self.mount_point_combo.currentText()
+        cipher_path = self.cipher_dir_combo.currentText().strip()
+        mount_path = self.mount_point_combo.currentText().strip()
 
-        self.cipher_warning_label.setVisible(os.path.exists(cipher_path))
-        self.mount_warning_label.setVisible(os.path.exists(mount_path))
+        # Cipher dir: Using an existing encrypted folder is valid.
+        if os.path.exists(cipher_path):
+            self.cipher_warning_label.setText("ℹ️ Existing encrypted folder will be used (expected for existing volumes).")
+            self.cipher_warning_label.setStyleSheet("color: #4d7c0f;")  # green-ish info
+            self.cipher_warning_label.setVisible(True)
+        else:
+            self.cipher_warning_label.setText("ℹ️ Encrypted folder does not exist; it will be created.")
+            self.cipher_warning_label.setStyleSheet("color: #996300;")  # amber info
+            self.cipher_warning_label.setVisible(True)
 
-        self.button_box.button(QDialogButtonBox.StandardButton.Ok).setEnabled(
-            not self.cipher_warning_label.isVisible() and not self.mount_warning_label.isVisible()
-        )
+        # Mount point: must be an existing or creatable directory; should be empty at mount time
+        if os.path.exists(mount_path) and os.path.isdir(mount_path) and os.listdir(mount_path):
+            self.mount_warning_label.setText("⚠️ Mount point is not empty. It must be empty to mount.")
+            self.mount_warning_label.setStyleSheet("color: orange;")
+            self.mount_warning_label.setVisible(True)
+        elif not os.path.exists(mount_path):
+            self.mount_warning_label.setText("ℹ️ Mount point does not exist; it will be created.")
+            self.mount_warning_label.setStyleSheet("color: #996300;")
+            self.mount_warning_label.setVisible(True)
+        else:
+            self.mount_warning_label.setVisible(False)
+
+        # Always allow proceed when fields are filled; mount emptiness re-checked before mounting
+        fields_ok = bool(self.label_edit.text().strip() and cipher_path and mount_path)
+        self.button_box.button(QDialogButtonBox.StandardButton.Ok).setEnabled(fields_ok)
 
 
     def browse_path(self, combo, caption):
