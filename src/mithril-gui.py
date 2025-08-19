@@ -23,9 +23,12 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__)) if "__file__" in locals(
 ICONS_DIR = os.path.normpath(os.path.join(SCRIPT_DIR, os.pardir, "icons"))
 
 # --- Configuration ---
-ORGANIZATION_NAME = "GocryptfsGUI"
-APPLICATION_NAME = "GocryptfsManager"
+ORGANIZATION_NAME = "Mithril"
+APPLICATION_NAME = "Mithril"
 PROFILES_FILE = os.path.join(os.path.expanduser("~"), ".config", APPLICATION_NAME, "profiles.json")
+OLD_ORG_NAME = "GocryptfsGUI"
+OLD_APP_NAME = "GocryptfsManager"
+OLD_PROFILES_FILE = os.path.join(os.path.expanduser("~"), ".config", OLD_APP_NAME, "profiles.json")
 
 class ErrorDialog(QDialog):
     """A custom dialog for showing detailed, scrollable error messages."""
@@ -650,6 +653,16 @@ class PreferencesDialog(QDialog):
         self.setMinimumWidth(400)
 
         self.settings = QSettings(ORGANIZATION_NAME, APPLICATION_NAME)
+        # Migrate old settings on first run under new app name
+        try:
+            old_settings = QSettings(OLD_ORG_NAME, OLD_APP_NAME)
+            for key in ("close_behavior", "automount_on_creation", "advanced_flags_expanded", "last_profile", "use_monochrome_icon"):
+                if self.settings.value(key, None) is None:
+                    val = old_settings.value(key, None)
+                    if val is not None:
+                        self.settings.setValue(key, val)
+        except Exception:
+            pass
         layout = QVBoxLayout(self)
 
         # --- Close Behavior ---
@@ -838,7 +851,7 @@ class SuccessPage(QWizardPage):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("gocryptfs Manager")
+        self.setWindowTitle("Mithril")
         # Set application icon from bundled icons
         # A check for the existence of the icon file
         if sys.platform.startswith("win"):
@@ -1691,6 +1704,14 @@ def main():
     if shutil.which('gocryptfs') is None:
         QMessageBox.critical(None, "Dependency Error", "Required app 'gocryptfs' not found.")
         sys.exit(1)
+
+    # --- Profiles migration: copy over old profiles if new location missing ---
+    if not os.path.exists(PROFILES_FILE) and os.path.exists(OLD_PROFILES_FILE):
+        try:
+            os.makedirs(os.path.dirname(PROFILES_FILE), exist_ok=True)
+            shutil.copy2(OLD_PROFILES_FILE, PROFILES_FILE)
+        except Exception:
+            pass
 
     # --- First Run Wizard ---
     if not os.path.exists(PROFILES_FILE):
