@@ -4,6 +4,11 @@ import json
 import subprocess
 import shutil
 import shlex
+# Only set Linux-specific Qt platform on Linux before importing Qt
+if sys.platform.startswith("linux"):
+    os.environ.setdefault("QT_QPA_PLATFORMTHEME", "gtk3")
+    # Do not force xcb (can break Wayland); let Qt decide unless explicitly set
+
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QListWidget, QStackedWidget, QMenuBar, QFileDialog, QInputDialog, QMessageBox,
@@ -12,10 +17,6 @@ from PyQt6.QtWidgets import (
     QWizard, QWizardPage, QTextBrowser, QGridLayout, QFrame, QRadioButton)
 from PyQt6.QtCore import QProcess, QSize, Qt, QPropertyAnimation, QEasingCurve, QSettings, QTimer
 from PyQt6.QtGui import QAction, QIcon, QPixmap
-# Only set Linux-specific Qt platform on Linux
-if sys.platform.startswith("linux"):
-    os.environ["QT_QPA_PLATFORMTHEME"] = "gtk3"
-    os.environ["QT_QPA_PLATFORM"] = "xcb"
 
 # Directory for bundled icons
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__)) if "__file__" in locals() else os.getcwd()
@@ -918,7 +919,7 @@ class MainWindow(QMainWindow):
         found_terminal_name = None
 
         for name, command in compatible_terminals.items():
-            if subprocess.run(['which', name], capture_output=True, text=True).returncode == 0:
+            if shutil.which(name):
                 terminal_command = command
                 found_terminal_name = name
                 break
@@ -1208,9 +1209,16 @@ class MainWindow(QMainWindow):
                     self.mount_volume(i, profile_name=profile_name)
 
     def open_folder(self, path):
-        """Opens the specified path in the default file manager."""
+        """Opens the specified path in the default file manager (cross-platform)."""
         try:
-            subprocess.run(['xdg-open', path], check=True)
+            if sys.platform.startswith('linux'):
+                subprocess.run(['xdg-open', path], check=True)
+            elif sys.platform == 'darwin':
+                subprocess.run(['open', path], check=True)
+            elif sys.platform.startswith('win'):
+                os.startfile(path)  # type: ignore[attr-defined]
+            else:
+                subprocess.run(['xdg-open', path], check=True)
         except Exception as e:
             self.statusBar().showMessage(f"Failed to open folder: {e}", 5000)
 
@@ -1680,7 +1688,7 @@ def main():
     app.setQuitOnLastWindowClosed(False)
     app.setAttribute(Qt.ApplicationAttribute.AA_DontUseNativeMenuBar, False)
 
-    if subprocess.run(['which', 'gocryptfs'], capture_output=True).returncode != 0:
+    if shutil.which('gocryptfs') is None:
         QMessageBox.critical(None, "Dependency Error", "Required app 'gocryptfs' not found.")
         sys.exit(1)
 
