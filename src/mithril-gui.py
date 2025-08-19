@@ -22,6 +22,14 @@ from PyQt6.QtGui import QAction, QIcon, QPixmap
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__)) if "__file__" in locals() else os.getcwd()
 ICONS_DIR = os.path.normpath(os.path.join(SCRIPT_DIR, os.pardir, "icons"))
 
+def themed_icon(name: str, fallback_filename: str = "icon_32.png") -> QIcon:
+    """Return a theme icon if available; otherwise fall back to bundled icon."""
+    icon = QIcon.fromTheme(name)
+    if not icon or icon.isNull():
+        path = os.path.join(ICONS_DIR, fallback_filename)
+        icon = QIcon(path) if os.path.exists(path) else QIcon()
+    return icon
+
 # --- Configuration ---
 ORGANIZATION_NAME = "Mithril"
 APPLICATION_NAME = "Mithril"
@@ -1104,7 +1112,7 @@ class MainWindow(QMainWindow):
                     has_pinned_volumes = True
                     label = vol.get('label', f"Volume {i+1}")
                     is_mounted = vol.get('mount_point') in self.mounted_paths
-                    icon = QIcon.fromTheme("media-eject" if is_mounted else "folder-blue")
+                    icon = themed_icon("media-eject" if is_mounted else "folder-blue", fallback_filename="icon_16.png")
                     action = QAction(icon, label, self)
                     action.triggered.connect(lambda checked, vol_id=i, p_name=profile_name: self.toggle_mount_from_tray(vol_id, p_name))
                     self.tray_menu.addAction(action)
@@ -1279,7 +1287,7 @@ class MainWindow(QMainWindow):
         volumes = profile.get("volumes", [])
         for i, vol in enumerate(volumes):
             is_mounted = vol.get('mount_point') in self.mounted_paths
-            icon = QIcon.fromTheme("emblem-ok" if is_mounted else "emblem-symbolic-link")
+            icon = themed_icon("emblem-ok" if is_mounted else "emblem-symbolic-link", fallback_filename="icon_32.png")
             item = QListWidgetItem(icon, f" {vol.get('label', 'Unnamed Volume')}")
             item.setToolTip(f"Mount Point: {vol.get('mount_point')}")
             item.setData(Qt.ItemDataRole.UserRole, i) # Store index as ID
