@@ -13,3 +13,8 @@ The format is inspired by Keep a Changelog and follows simple dated entries whil
 - Security Guide: remove stray Python code embedded in the HTML content.
 - Cross-platform polish: move Linux Qt env vars before importing PyQt; use `shutil.which` for tool detection; make folder opening platform-aware (Linux/macOS/Windows).
 
+### Additional improvements
+
+- Standardize app naming to “Mithril” (settings/org names and window title). Migrate profiles and selected settings from previous names.
+- Run external commands asynchronously via `QProcess` to prevent UI blocking during mount/unmount/init.
+- Stop echoing commands to the embedded terminal (previous behavior wasn’t meaningful for terminal emulators).
