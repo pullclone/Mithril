@@ -548,11 +548,6 @@ class SecurityGuideDialog(QDialog):
             <li>Backups remain secure even if stolen, so long as your passphrase is strong.</li>
         </ul>
         
-        # Add a styled horizontal line
-        line = QFrame()
-        line.setFrameShape(QFrame.Shape.HLine)
-        line.setFrameShadow(QFrame.Shadow.Sunken)
-        layout.addWidget(line)
         
         <p>For more advanced topics, see the <a href="https://github.com/rfjakob/gocryptfs">gocryptfs documentation</a>. Mithril is a wrapper — the encryption is handled by the trusted gocryptfs tool underneath.</p>
         """
