@@ -1157,8 +1157,17 @@ class MainWindow(QMainWindow):
 
         try:
             command_args = shlex.split(command_str)
+            # Build stdin data for gocryptfs
+            input_data = None
+            if needs_password and password is not None:
+                if is_init:
+                    # gocryptfs -init prompts twice; pass two lines
+                    input_data = password + b"\n" + password + b"\n"
+                else:
+                    input_data = password + b"\n"
+
             result = subprocess.run(
-                command_args, input=password, capture_output=True, check=False
+                command_args, input=input_data, capture_output=True, check=False
             )
 
             if result.returncode == 0:
@@ -1277,7 +1286,7 @@ class MainWindow(QMainWindow):
         # --- Initialization Check ---
         is_new_volume = not os.path.exists(os.path.join(cipher_dir, "gocryptfs.conf"))
         if is_new_volume:
-            init_command = shlex.join(["gocryptfs", "-init", cipher_dir])
+            init_command = shlex.join(["gocryptfs", "-init", "-passfile", "-", cipher_dir])
             # After successful initialization, recursively call mount_volume to mount it
             on_init_success = lambda: self.mount_volume(volume_id, profile_name, auto_open)
             self.run_gocryptfs_command(
@@ -1301,7 +1310,7 @@ class MainWindow(QMainWindow):
         if flags.get("reverse"): extra_args.append("-reverse")
         if flags.get("scryptn"): extra_args.append(f"-scryptn {flags['scryptn']}")
 
-        command_args = ["gocryptfs", *extra_args, cipher_dir, mount_point]
+        command_args = ["gocryptfs", "-passfile", "-", *extra_args, cipher_dir, mount_point]
         command = shlex.join(command_args)
         
         on_success_callbacks = [self.update_mounted_list]
@@ -1598,7 +1607,7 @@ class MainWindow(QMainWindow):
             return
 
         # This now runs synchronously and will block until the password is set or cancelled.
-        init_command = shlex.join(["gocryptfs", "-init", cipher_dir])
+        init_command = shlex.join(["gocryptfs", "-init", "-passfile", "-", cipher_dir])
         self.run_gocryptfs_command(
             init_command,
             needs_password=True,
