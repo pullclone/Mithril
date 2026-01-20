@@ -16,10 +16,12 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import QSize, Qt, QPropertyAnimation, QEasingCurve, QSettings, QTimer
 from PyQt6.QtGui import QAction, QIcon, QPixmap
 from terminal_support import TerminalManager
-# Only set Linux-specific Qt platform on Linux
+# Only set Linux-specific Qt platform on Linux if not already specified by the environment.
 if sys.platform.startswith("linux"):
-    os.environ["QT_QPA_PLATFORMTHEME"] = "gtk3"
-    os.environ["QT_QPA_PLATFORM"] = "xcb"
+    os.environ.setdefault("QT_QPA_PLATFORMTHEME", "gtk3")
+    # Respect explicit overrides (Wayland/NixOS may set WAYLAND_DISPLAY/Qt platform).
+    if "QT_QPA_PLATFORM" not in os.environ:
+        os.environ["QT_QPA_PLATFORM"] = "xcb"
 
 # Directory for bundled icons
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__)) if "__file__" in locals() else os.getcwd()
