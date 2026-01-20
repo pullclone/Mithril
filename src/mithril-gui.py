@@ -3,14 +3,17 @@ import os
 import json
 import subprocess
 import shlex
+import shutil
+from typing import Optional
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QListWidget, QStackedWidget, QMenuBar, QFileDialog, QInputDialog, QMessageBox,
     QDialog, QFormLayout, QLineEdit, QLabel, QDialogButtonBox, QComboBox,
     QListWidgetItem, QCheckBox, QSystemTrayIcon, QMenu, QTextEdit, QToolButton, QGroupBox,
     QWizard, QWizardPage, QTextBrowser, QGridLayout, QFrame, QRadioButton)
-from PyQt6.QtCore import QProcess, QSize, Qt, QPropertyAnimation, QEasingCurve, QSettings, QTimer
+from PyQt6.QtCore import QSize, Qt, QPropertyAnimation, QEasingCurve, QSettings, QTimer
 from PyQt6.QtGui import QAction, QIcon, QPixmap
+from terminal_support import TerminalManager
 # Only set Linux-specific Qt platform on Linux
 if sys.platform.startswith("linux"):
     os.environ["QT_QPA_PLATFORMTHEME"] = "gtk3"
@@ -675,6 +678,191 @@ class PreferencesDialog(QDialog):
         super().accept()
 
 
+class TerminalSetupDialog(QDialog):
+    """Guides the user through enabling the optional embedded terminal."""
+    def __init__(self, terminal_manager: TerminalManager, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Embedded Terminal Setup")
+        self.setMinimumWidth(520)
+
+        # Refresh detection right before showing the dialog to ensure fresh data.
+        terminal_manager.refresh_detection()
+        self.terminal_manager = terminal_manager
+        detection = terminal_manager.detection
+
+        layout = QVBoxLayout(self)
+        intro = QLabel("The embedded terminal uses QTermWidget. It is optional and disabled unless you opt in.")
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        status_text = "QTermWidget detected" if detection.available else "QTermWidget not found"
+        status = QLabel(f"Status: {status_text}")
+        layout.addWidget(status)
+
+        self.enable_checkbox = QCheckBox("Enable embedded terminal when available")
+        self.enable_checkbox.setChecked(terminal_manager.enabled and detection.available)
+        if not detection.available:
+            self.enable_checkbox.setToolTip("Install QTermWidget first, then enable.")
+        layout.addWidget(self.enable_checkbox)
+
+        self.remember_checkbox = QCheckBox("Remember this choice and do not prompt again")
+        self.remember_checkbox.setChecked(True)
+        layout.addWidget(self.remember_checkbox)
+
+        self.instructions_browser = QTextBrowser()
+        self.instructions_browser.setReadOnly(True)
+        self.instructions_browser.setOpenExternalLinks(True)
+        self.instructions_browser.setHtml(self._build_detection_html(detection))
+        layout.addWidget(self.instructions_browser)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _build_detection_html(self, detection):
+        pkg_text = ", ".join(detection.suggested_packages) if detection.suggested_packages else "Not available"
+        install_hint = detection.install_hint or "Install instructions unavailable for this platform."
+        notes = detection.notes or ["Package names can differ by distribution. Verify before installing."]
+        attempts = detection.import_attempts or []
+        errors = detection.errors or []
+
+        payload = json.dumps(detection.as_dict(), indent=2)
+        note_lines = "".join(f"<li>{note}</li>" for note in notes)
+        error_lines = "".join(f"<li>{err}</li>" for err in errors)
+        attempt_lines = "".join(f"<li>{attempt}</li>" for attempt in attempts)
+
+        html = f"""
+        <h3>Detection</h3>
+        <ul>
+            <li><b>Provider:</b> {detection.provider_name or 'None detected'}</li>
+            <li><b>Distro:</b> {detection.distro or 'Unknown'}</li>
+            <li><b>Package manager:</b> {detection.package_manager or 'Unknown'}</li>
+            <li><b>Suggested packages:</b> {pkg_text}</li>
+            <li><b>Install hint:</b> {install_hint}</li>
+        </ul>
+        <h4>Notes</h4>
+        <ul>{note_lines}</ul>
+        <h4>Import attempts</h4>
+        <ul>{attempt_lines}</ul>
+        <h4>Errors</h4>
+        <ul>{error_lines}</ul>
+        <h4>Structured output</h4>
+        <pre>{payload}</pre>
+        """
+        return html
+
+    def should_enable(self) -> bool:
+        return self.enable_checkbox.isChecked()
+
+    def should_remember(self) -> bool:
+        return self.remember_checkbox.isChecked()
+
+
+class TerminalPanel(QFrame):
+    """Container for the optional embedded terminal."""
+
+    PREFERRED_HEIGHT = 260
+
+    def __init__(self, terminal_manager: TerminalManager, request_setup_callback, parent=None):
+        super().__init__(parent)
+        self.terminal_manager = terminal_manager
+        self.request_setup_callback = request_setup_callback
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self._current_terminal: Optional[QWidget] = None
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setSpacing(4)
+
+        header_layout = QHBoxLayout()
+        self.status_label = QLabel("Terminal disabled")
+        header_layout.addWidget(self.status_label)
+        header_layout.addStretch()
+
+        self.refresh_button = QToolButton()
+        self.refresh_button.setText("Re-scan")
+        self.refresh_button.clicked.connect(self.rescan_and_refresh)
+        header_layout.addWidget(self.refresh_button)
+
+        self.setup_button = QToolButton()
+        self.setup_button.setText("Setup")
+        self.setup_button.clicked.connect(self.request_setup_callback)
+        header_layout.addWidget(self.setup_button)
+
+        layout.addLayout(header_layout)
+
+        self.stack = QStackedWidget()
+        self.instructions_browser = QTextBrowser()
+        self.instructions_browser.setOpenExternalLinks(True)
+        self.instructions_browser.setReadOnly(True)
+        self.stack.addWidget(self.instructions_browser)
+
+        self.terminal_holder = QWidget()
+        self.terminal_layout = QVBoxLayout(self.terminal_holder)
+        self.terminal_layout.setContentsMargins(0, 0, 0, 0)
+        self.terminal_layout.setSpacing(0)
+        self.stack.addWidget(self.terminal_holder)
+
+        layout.addWidget(self.stack)
+
+        self.refresh()
+
+    def refresh(self):
+        detection = self.terminal_manager.detection
+        if not self.terminal_manager.enabled:
+            self.status_label.setText("Terminal disabled")
+            self._show_instructions("Enable the embedded terminal from the setup dialog to use QTermWidget.")
+            return
+
+        if not detection.available:
+            self.status_label.setText("QTermWidget missing")
+            self._show_instructions(self._format_detection_html(detection))
+            return
+
+        widget = self.terminal_manager.create_or_get_widget(self)
+        self._set_terminal_widget(widget)
+        provider_name = detection.provider_name or "QTermWidget"
+        self.status_label.setText(f"Embedded terminal active ({provider_name})")
+        self.stack.setCurrentWidget(self.terminal_holder)
+
+    def _show_instructions(self, html: str):
+        self.instructions_browser.setHtml(html)
+        self.stack.setCurrentWidget(self.instructions_browser)
+
+    def _set_terminal_widget(self, widget: QWidget):
+        # Clear existing widget to avoid stacking multiple instances.
+        while self.terminal_layout.count():
+            item = self.terminal_layout.takeAt(0)
+            if item.widget():
+                item.widget().setParent(None)
+        self.terminal_layout.addWidget(widget)
+        self._current_terminal = widget
+
+    def rescan_and_refresh(self):
+        self.terminal_manager.refresh_detection()
+        self.refresh()
+
+    def _format_detection_html(self, detection):
+        pkg_text = ", ".join(detection.suggested_packages) if detection.suggested_packages else "Unknown"
+        install_hint = detection.install_hint or "Install instructions unavailable."
+        payload = json.dumps(detection.as_dict(), indent=2)
+        notes = detection.notes or ["QTermWidget is optional. The rest of Mithril will continue to function."]
+        note_lines = "".join(f"<li>{note}</li>" for note in notes)
+        return f"""
+        <h3>QTermWidget not available</h3>
+        <p>Mithril will run without it. Install to enable the embedded terminal.</p>
+        <ul>
+            <li><b>Distro:</b> {detection.distro or 'Unknown'}</li>
+            <li><b>Package manager:</b> {detection.package_manager or 'Unknown'}</li>
+            <li><b>Suggested packages:</b> {pkg_text}</li>
+            <li><b>Install hint:</b> {install_hint}</li>
+        </ul>
+        <h4>Details</h4>
+        <pre>{payload}</pre>
+        """
+
+
 class MithrilSetupWizard(QWizard):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -832,19 +1020,21 @@ class MainWindow(QMainWindow):
             self.setWindowIcon(QIcon(icon_path))
         self.setMinimumSize(QSize(700, 500))
         self.settings = QSettings(ORGANIZATION_NAME, APPLICATION_NAME)
+        self.terminal_manager = TerminalManager(self.settings, default_workdir=os.path.expanduser("~"))
 
         self.cached_password = None
         self.profiles = {}
         self.current_profile_name = "Default"
         self.mounted_paths = set()
-        self.terminal_started = False
-        self.terminal_process = None
+        self.terminal_visible = self.terminal_manager.visible and self.terminal_manager.has_working_provider()
         self.has_shown_tray_message = False
         self.is_quitting = False
 
         # The terminal container widget must be created before the main widgets are set up.
-        self.terminal_container = QWidget()
-        self.terminal_container.setFixedHeight(0)
+        self.terminal_panel = TerminalPanel(self.terminal_manager, self.show_terminal_setup_dialog, self)
+        initial_height = TerminalPanel.PREFERRED_HEIGHT if self.terminal_visible else 0
+        self.terminal_panel.setMaximumHeight(initial_height)
+        self.terminal_container = self.terminal_panel
 
         self._setup_main_widgets()
         self._create_actions()
@@ -860,13 +1050,6 @@ class MainWindow(QMainWindow):
 
         # Automount volumes after a short delay
         QTimer.singleShot(1500, self.automount_volumes)
-
-    def showEvent(self, event):
-        """Start the terminal process the first time the window is shown."""
-        super().showEvent(event)
-        if not self.terminal_started:
-            self.start_terminal_process()
-            self.terminal_started = True
 
     def _setup_main_widgets(self):
         self.central_widget = QWidget()
@@ -884,51 +1067,12 @@ class MainWindow(QMainWindow):
         expanded = self.settings.value("advanced_flags_expanded", False, type=bool)
         self.simplified_view.advanced_group.setChecked(expanded)
 
-    def start_terminal_process(self):
-        """Finds a compatible terminal and starts it embedded in the container widget."""
-        shell = os.environ.get('SHELL', 'sh')
-
-        # --- Find a suitable terminal emulator ---
-        # We search for terminals that are known to support the -into or --embed flag.
-        # This requires a valid winId(), which is why this is called from showEvent.
-        win_id = self.terminal_container.winId()
-        compatible_terminals = {
-            'konsole': ['--nomenubar', '--notabbar', '--noframe', '-e', shell, '--embed', str(int(win_id))],
-            'xterm': ['-into', str(int(win_id)), '-e', shell],
-            'urxvt': ['-embed', str(int(win_id)), '-e', shell]
-        }
-
-        terminal_command = None
-        found_terminal_name = None
-
-        for name, command in compatible_terminals.items():
-            if subprocess.run(['which', name], capture_output=True, text=True).returncode == 0:
-                terminal_command = command
-                found_terminal_name = name
-                break
-        
-        if not terminal_command:
-            self.statusBar().showMessage("No compatible terminal found (konsole, xterm, or urxvt).", 5000)
-            if hasattr(self, 'toggle_terminal_action'):
-                self.toggle_terminal_action.setEnabled(False)
-            return
-
-        # --- Start the Process ---
-        self.terminal_process = QProcess(self)
-        self.terminal_process.start(found_terminal_name, terminal_command)
-
-        if not self.terminal_process.waitForStarted(2000):
-            self.statusBar().showMessage(f"Failed to start {found_terminal_name}.", 5000)
-            self.terminal_process = None
-            if hasattr(self, 'toggle_terminal_action'):
-                self.toggle_terminal_action.setEnabled(False)
-            return
-
     def _create_actions(self):
         self.quit_action = QAction("&Quit", self)
         self.quit_action.setShortcut("Ctrl+Q")
         self.quit_action.triggered.connect(self.close_app)
-        self.toggle_terminal_action = QAction("Toggle &Terminal", self, shortcut="F12")
+        self.toggle_terminal_action = QAction("Toggle &Terminal", self, shortcut="F12", checkable=True)
+        self.toggle_terminal_action.setChecked(self.terminal_visible)
         self.toggle_terminal_action.triggered.connect(self.toggle_terminal)
         self.clear_cache_action = QAction("Clear Cached Password", self)
         self.clear_cache_action.triggered.connect(self.clear_cached_password)
@@ -948,6 +1092,9 @@ class MainWindow(QMainWindow):
 
         view_menu = menu_bar.addMenu("&View")
         view_menu.addAction(self.toggle_terminal_action)
+        self.terminal_setup_action = QAction("Terminal Setup...", self)
+        self.terminal_setup_action.triggered.connect(self.show_terminal_setup_dialog)
+        view_menu.addAction(self.terminal_setup_action)
 
         help_menu = menu_bar.addMenu("&Help")
         self.security_guide_action = QAction("Security Best Practices", self)
@@ -995,6 +1142,23 @@ class MainWindow(QMainWindow):
         else:
             self._preferences_dialog.show()
             self._preferences_dialog.activateWindow()
+
+    def show_terminal_setup_dialog(self):
+        dialog = TerminalSetupDialog(self.terminal_manager, self)
+        result = dialog.exec()
+
+        if dialog.should_remember():
+            self.terminal_manager.mark_setup_seen()
+
+        if result == QDialog.DialogCode.Accepted:
+            enable = dialog.should_enable()
+            self.terminal_manager.set_enabled(enable)
+            self.terminal_panel.refresh()
+            self._set_terminal_visibility(enable)
+            if enable and not self.terminal_manager.has_working_provider():
+                self.statusBar().showMessage("Terminal enabled but QTermWidget is missing. Showing setup instructions.", 6000)
+        else:
+            self.terminal_panel.refresh()
 
     def rerun_setup_wizard(self):
         if hasattr(self, "_setup_wizard") and self._setup_wizard.isVisible():
@@ -1105,8 +1269,15 @@ class MainWindow(QMainWindow):
         else:
             self.mount_volume(volume_id, profile_name)
 
-    def run_gocryptfs_command(self, command_str, needs_password=False, success_message="", on_success=None, on_success_args=(), is_init=False, volume_id=None, profile_name=None):
-        self.write_to_terminal(command_str)
+    def run_gocryptfs_command(self, command, needs_password=False, success_message="", on_success=None, on_success_args=(), is_init=False, volume_id=None, profile_name=None):
+        # Accept both list and string forms but prefer explicit argument arrays to avoid injection issues.
+        command_args = command if isinstance(command, list) else shlex.split(command)
+        command_display = command if isinstance(command, str) else shlex.join(command_args)
+        self.write_to_terminal(command_display)
+
+        if not command_args:
+            QMessageBox.warning(self, "Command Error", "No command provided for gocryptfs operation.")
+            return
 
         password = None
         if needs_password:
@@ -1136,7 +1307,6 @@ class MainWindow(QMainWindow):
                         return
 
         try:
-            command_args = shlex.split(command_str)
             result = subprocess.run(
                 command_args, input=password, capture_output=True, check=False
             )
@@ -1152,7 +1322,11 @@ class MainWindow(QMainWindow):
                 if on_success:
                     on_success(*on_success_args)
             else:
-                error_output = result.stderr.decode('utf-8').strip()
+                stderr_bytes = result.stderr or b""
+                try:
+                    error_output = stderr_bytes.decode('utf-8', errors="ignore").strip()
+                except AttributeError:
+                    error_output = str(stderr_bytes).strip()
                 # --- Better Password Handling ---
                 if "password incorrect" in error_output.lower() and volume_id is not None:
                     self.cached_password = None # Clear incorrect cached password
@@ -1167,6 +1341,8 @@ class MainWindow(QMainWindow):
                 error_dialog = ErrorDialog(error_msg, error_output, self)
                 error_dialog.exec()
 
+        except FileNotFoundError as e:
+            QMessageBox.critical(self, "Command Not Found", f"Could not execute '{command_args[0]}': {e}")
         except Exception as e:
             QMessageBox.critical(self, "Unexpected Error", f"An unexpected error occurred: {e}")
 
@@ -1257,7 +1433,7 @@ class MainWindow(QMainWindow):
         # --- Initialization Check ---
         is_new_volume = not os.path.exists(os.path.join(cipher_dir, "gocryptfs.conf"))
         if is_new_volume:
-            init_command = shlex.join(["gocryptfs", "-init", cipher_dir])
+            init_command = ["gocryptfs", "-init", cipher_dir]
             # After successful initialization, recursively call mount_volume to mount it
             on_init_success = lambda: self.mount_volume(volume_id, profile_name, auto_open)
             self.run_gocryptfs_command(
@@ -1279,10 +1455,10 @@ class MainWindow(QMainWindow):
         extra_args = []
         if flags.get("allow_other"): extra_args.append("-allow_other")
         if flags.get("reverse"): extra_args.append("-reverse")
-        if flags.get("scryptn"): extra_args.append(f"-scryptn {flags['scryptn']}")
+        if flags.get("scryptn"):
+            extra_args.extend(["-scryptn", str(flags["scryptn"])])
 
         command_args = ["gocryptfs", *extra_args, cipher_dir, mount_point]
-        command = shlex.join(command_args)
         
         on_success_callbacks = [self.update_mounted_list]
         
@@ -1298,7 +1474,7 @@ class MainWindow(QMainWindow):
                 func()
 
         self.run_gocryptfs_command(
-            command, 
+            command_args, 
             True, 
             f"Mounted {volume['label']}", 
             on_mount_success,
@@ -1311,7 +1487,7 @@ class MainWindow(QMainWindow):
             profile_name = self.current_profile_name
         volume = self.profiles[profile_name]["volumes"][volume_id]
         self.run_gocryptfs_command(
-            f"umount '{volume['mount_point']}'",
+            ["umount", volume["mount_point"]],
             False, f"Unmounted {volume['label']}", self.update_mounted_list
         )
 
@@ -1530,16 +1706,15 @@ class MainWindow(QMainWindow):
         mount_point = volume.get("mount_point")
 
         try:
-            # Securely delete the encrypted data
-            command_cipher = shlex.join(["rm", "-rf", cipher_dir])
-            self.write_to_terminal(f"Attempting to securely delete: {command_cipher}")
-            result_cipher = subprocess.run(shlex.split(command_cipher), capture_output=True, check=True)
-
-            # Delete the now-empty mount point
-            if os.path.isdir(mount_point):
-                command_mount = shlex.join(["rm", "-rf", mount_point])
-                self.write_to_terminal(f"Deleting mount point: {command_mount}")
-                result_mount = subprocess.run(shlex.split(command_mount), capture_output=True, check=True)
+            for target in [cipher_dir, mount_point]:
+                if not target:
+                    raise ValueError("Missing path for deletion.")
+                normalized = os.path.realpath(target)
+                if normalized in ("/", os.path.expanduser("~"), os.path.expanduser("~/")):
+                    raise ValueError(f"Refusing to delete unsafe path: {normalized}")
+                if os.path.isdir(normalized):
+                    self.write_to_terminal(f"Deleting directory tree: {normalized}")
+                    shutil.rmtree(normalized)
 
             self.statusBar().showMessage(f"Successfully deleted '{volume['label']}' and its mount point.", 5000)
             self.tray_icon.showMessage("Success", f"Securely deleted volume '{volume['label']}'.", QSystemTrayIcon.MessageIcon.Information, 3000)
@@ -1578,7 +1753,7 @@ class MainWindow(QMainWindow):
             return
 
         # This now runs synchronously and will block until the password is set or cancelled.
-        init_command = shlex.join(["gocryptfs", "-init", cipher_dir])
+        init_command = ["gocryptfs", "-init", cipher_dir]
         self.run_gocryptfs_command(
             init_command,
             needs_password=True,
@@ -1623,19 +1798,49 @@ class MainWindow(QMainWindow):
 
     def write_to_terminal(self, command_str):
         """Write a command string to the embedded terminal."""
-        if hasattr(self, "terminal_process") and self.terminal_process is not None:
-            try:
-                self.terminal_process.write((command_str + "\n").encode())
-            except Exception:
-                pass
+        self.terminal_manager.write(command_str)
 
     # --- Toggles ---
-    def toggle_terminal(self):
-        end_height = 200 if self.terminal_container.height() == 0 else 0
+    def _animate_terminal_height(self, end_height):
         self.animation = QPropertyAnimation(self.terminal_container, b"maximumHeight")
-        self.animation.setDuration(300)
+        self.animation.setDuration(250)
+        self.animation.setEasingCurve(QEasingCurve.Type.InOutCubic)
         self.animation.setEndValue(end_height)
         self.animation.start()
+
+    def _set_terminal_visibility(self, visible: bool, animate: bool = True):
+        self.terminal_visible = visible
+        self.terminal_manager.set_visible(visible)
+        if hasattr(self, "toggle_terminal_action"):
+            self.toggle_terminal_action.setChecked(visible)
+
+        target_height = TerminalPanel.PREFERRED_HEIGHT if visible else 0
+        if animate:
+            self._animate_terminal_height(target_height)
+        else:
+            self.terminal_container.setMaximumHeight(target_height)
+
+        if visible:
+            self.terminal_panel.refresh()
+
+    def toggle_terminal(self):
+        if self.terminal_manager.should_prompt_setup():
+            self.show_terminal_setup_dialog()
+            return
+
+        if not self.terminal_manager.enabled:
+            self.show_terminal_setup_dialog()
+            return
+
+        if not self.terminal_visible:
+            self.terminal_manager.refresh_detection()
+            self.terminal_panel.refresh()
+
+        new_visible = not self.terminal_visible
+        self._set_terminal_visibility(new_visible)
+
+        if new_visible and not self.terminal_manager.has_working_provider():
+            self.statusBar().showMessage("Terminal provider missing; showing setup instructions.", 6000)
 
 def main():
     # A check for QApplication instance
