@@ -1,38 +1,14 @@
-import importlib
 import os
-import platform
 import shutil
-from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional, Tuple
+from dataclasses import dataclass
+from typing import Optional
 
 from PyQt6.QtWidgets import QLabel, QTextBrowser, QVBoxLayout, QWidget
 
-
-@dataclass
-class TerminalDetectionResult:
-    available: bool
-    provider_name: Optional[str] = None
-    widget_cls: Optional[type] = None
-    distro: Optional[str] = None
-    package_manager: Optional[str] = None
-    suggested_packages: List[str] = field(default_factory=list)
-    install_hint: Optional[str] = None
-    notes: List[str] = field(default_factory=list)
-    errors: List[str] = field(default_factory=list)
-    import_attempts: List[str] = field(default_factory=list)
-
-    def as_dict(self) -> Dict:
-        return {
-            "available": self.available,
-            "provider": self.provider_name,
-            "distro": self.distro,
-            "package_manager": self.package_manager,
-            "suggested_packages": self.suggested_packages,
-            "install_hint": self.install_hint,
-            "notes": self.notes,
-            "errors": self.errors,
-            "import_attempts": self.import_attempts,
-        }
+from terminal_detection import (
+    TerminalDetectionResult,
+    detect_terminal_support,
+)
 
 
 @dataclass

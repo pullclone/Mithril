@@ -1787,7 +1787,9 @@ class MainWindow(QMainWindow):
             for target in [cipher_dir, mount_point]:
                 if not target:
                     raise ValueError("Missing path for deletion.")
-                resolved = _resolve_path(target)
+                path_obj = Path(target).expanduser()
+                resolved = path_obj.resolve(strict=False)
+                is_symlink = path_obj.is_symlink()
                 if resolved == Path("/"):
                     raise ValueError("Refusing to delete the filesystem root.")
                 if resolved == home_dir:
@@ -1797,31 +1799,39 @@ class MainWindow(QMainWindow):
                     typed, ok = QInputDialog.getText(
                         self,
                         "Confirm Path Outside Safe Roots",
-                        f"The path\n{resolved}\nIs outside allowed roots.\n\nType the full path to confirm deletion:",
+                        f"The path\n{resolved}\nIs outside allowed roots.\n\nType the full resolved path to confirm deletion:",
                     )
                     if not ok or typed.strip() != str(resolved):
                         self.statusBar().showMessage("Deletion cancelled (path not confirmed).", 4000)
                         return
-                resolved_targets.append(resolved)
+                resolved_targets.append({"resolved": resolved, "path": path_obj, "is_symlink": is_symlink})
 
             # Deduplicate while preserving order
             unique_targets = []
             seen = set()
-            for path_obj in resolved_targets:
-                if str(path_obj) in seen:
+            for entry in resolved_targets:
+                key = str(entry["resolved"])
+                if key in seen:
                     continue
-                seen.add(str(path_obj))
-                unique_targets.append(path_obj)
+                seen.add(key)
+                unique_targets.append(entry)
 
-            summary = "\n".join(str(p) for p in unique_targets)
-            counts = []
-            for p in unique_targets:
-                entry_count = _count_entries(p)
-                if entry_count:
-                    counts.append(f"{p} (contains ~{entry_count} items)" if entry_count <= 500 else f"{p} (contains more than 500 items)")
+            lines = []
+            for entry in unique_targets:
+                p = entry["path"]
+                resolved = entry["resolved"]
+                if entry["is_symlink"]:
+                    label = f"{p} (symlink -> {resolved}; will remove link only)"
                 else:
-                    counts.append(str(p))
-            summary = "\n".join(counts)
+                    label = str(p if p.is_absolute() else resolved)
+                    if resolved != p:
+                        label += f" (resolved -> {resolved})"
+                entry_count = _count_entries(resolved) if resolved.is_dir() and not entry["is_symlink"] else 0
+                if entry_count:
+                    lines.append(f"{label} (contains ~{entry_count} items)" if entry_count <= 500 else f"{label} (contains more than 500 items)")
+                else:
+                    lines.append(label)
+            summary = "\n".join(lines)
             confirm = QMessageBox.question(
                 self,
                 "Confirm Delete",
@@ -1832,7 +1842,17 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage("Deletion cancelled.", 3000)
                 return
 
-            for resolved in unique_targets:
+            for entry in unique_targets:
+                resolved = entry["resolved"]
+                path_obj = entry["path"]
+                if entry["is_symlink"]:
+                    self.write_to_terminal(f"Removing symlink: {path_obj} (target: {resolved})")
+                    try:
+                        path_obj.unlink()
+                    except FileNotFoundError:
+                        pass
+                    continue
+
                 if resolved.is_dir():
                     self.write_to_terminal(f"Deleting directory tree: {resolved}")
                     shutil.rmtree(resolved)
