@@ -50,13 +50,21 @@ def test_detect_package_manager(available, expected):
         ("fedora", "dnf", "qtermwidget-qt6"),
         ("arch", "pacman", "qtermwidget"),
         ("alpine", "apk", "qtermwidget-qt6"),
+        ("nixos", "nix", "qtermwidget-qt6"),
     ],
 )
 def test_build_install_guidance(distro, pm, expected_pkg):
     pkgs, hint, notes = td.build_install_guidance(distro, pm)
     assert expected_pkg in pkgs
-    if hint:
-        assert "sudo" in hint
-        assert pm in hint
+    if distro == "nixos":
+        assert hint and "nix profile install" in hint
+        assert "nixpkgs#" in hint
     else:
-        assert "No supported package manager" in " ".join(notes)
+        if pm == "pacman":
+            assert hint and "-S" in hint
+        elif pm == "apk":
+            assert hint and "add" in hint
+        elif pm == "brew":
+            assert hint and "brew install" in hint
+        else:
+            assert hint and "install" in hint

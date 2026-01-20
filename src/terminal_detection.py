@@ -81,10 +81,28 @@ def build_install_guidance(
     suggested_packages = distro_packages.get(distro_id, ["qtermwidget-qt6", "qtermwidget-qt5"])
     notes = []
 
-    if pm:
-        install_hint = f"sudo {pm} install {' '.join(suggested_packages)}"
-    else:
-        install_hint = None
+    pm_templates = {
+        "apt": "sudo apt install -y {pkgs}",
+        "dnf": "sudo dnf install -y {pkgs}",
+        "yum": "sudo yum install -y {pkgs}",
+        "zypper": "sudo zypper install -y {pkgs}",
+        "pacman": "sudo pacman -S --needed {pkgs}",
+        "apk": "sudo apk add {pkgs}",
+        "brew": "brew install {pkgs}",
+        "emerge": "sudo emerge {pkgs}",
+        "nix": "nix profile install nixpkgs#{pkg}",
+    }
+
+    install_hint = None
+
+    # Special-case NixOS regardless of detected package manager.
+    if distro_id == "nixos":
+        primary_pkg = suggested_packages[0]
+        install_hint = pm_templates["nix"].format(pkg=primary_pkg)
+        notes.append("Alternatively add qtermwidget to environment.systemPackages or home.packages.")
+    elif pm and pm in pm_templates:
+        install_hint = pm_templates[pm].format(pkgs=" ".join(suggested_packages))
+    elif not pm:
         notes.append("No supported package manager detected.")
 
     return suggested_packages, install_hint, notes
