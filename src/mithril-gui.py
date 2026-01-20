@@ -28,6 +28,11 @@ ICONS_DIR = os.path.normpath(os.path.join(SCRIPT_DIR, os.pardir, "icons"))
 ORGANIZATION_NAME = "GocryptfsGUI"
 APPLICATION_NAME = "GocryptfsManager"
 PROFILES_FILE = os.path.join(os.path.expanduser("~"), ".config", APPLICATION_NAME, "profiles.json")
+SENSITIVE_FLAGS = {
+    "-passfile", "--passfile",
+    "-extpass", "--extpass",
+    "-config"
+}
 
 # --- Path safety helpers ---
 def _is_under(base: Path, target: Path) -> bool:
@@ -48,6 +53,24 @@ def _is_path_allowed(target: Path, allowed_roots) -> bool:
         if _is_under(root_resolved, target):
             return True
     return False
+
+def format_cmd_for_echo(argv):
+    redacted = []
+    skip_next = False
+    for arg in argv:
+        if skip_next:
+            redacted.append("<redacted>")
+            skip_next = False
+            continue
+        if arg in SENSITIVE_FLAGS:
+            redacted.append(arg)
+            skip_next = True
+            continue
+        redacted.append(arg)
+    return " ".join(redacted)
+
+def can_exec(binary: str) -> bool:
+    return shutil.which(binary) is not None or (os.path.isabs(binary) and os.access(binary, os.X_OK))
 
 class ErrorDialog(QDialog):
     """A custom dialog for showing detailed, scrollable error messages."""
@@ -1300,16 +1323,13 @@ class MainWindow(QMainWindow):
             return
 
         executable = command_args[0]
-        executable_exists = False
-        if os.path.isabs(executable):
-            executable_exists = os.access(executable, os.X_OK)
-        else:
-            executable_exists = shutil.which(executable) is not None
-        if not executable_exists:
-            QMessageBox.critical(self, "Command Not Found", f"Required binary '{executable}' was not found in PATH.")
+        if not can_exec(executable):
+            self.statusBar().showMessage(f"Required binary '{executable}' was not found. Please install it and retry.", 6000)
+            QMessageBox.warning(self, "Command Not Found", f"The command '{executable}' is required but was not found in PATH.")
             return
 
-        self.write_to_terminal(command_display)
+        safe_echo = format_cmd_for_echo(command_args)
+        self.write_to_terminal(safe_echo)
 
         password = None
         if needs_password:
