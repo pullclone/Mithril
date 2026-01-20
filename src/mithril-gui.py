@@ -4,6 +4,7 @@ import json
 import subprocess
 import shlex
 import shutil
+from pathlib import Path
 from typing import Optional
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
@@ -27,6 +28,26 @@ ICONS_DIR = os.path.normpath(os.path.join(SCRIPT_DIR, os.pardir, "icons"))
 ORGANIZATION_NAME = "GocryptfsGUI"
 APPLICATION_NAME = "GocryptfsManager"
 PROFILES_FILE = os.path.join(os.path.expanduser("~"), ".config", APPLICATION_NAME, "profiles.json")
+
+# --- Path safety helpers ---
+def _is_under(base: Path, target: Path) -> bool:
+    try:
+        return os.path.commonpath([str(base), str(target)]) == str(base)
+    except Exception:
+        return False
+
+def _resolve_path(p: str) -> Path:
+    return Path(p).expanduser().resolve(strict=False)
+
+def _is_path_allowed(target: Path, allowed_roots) -> bool:
+    for root in allowed_roots:
+        try:
+            root_resolved = _resolve_path(str(root))
+        except Exception:
+            continue
+        if _is_under(root_resolved, target):
+            return True
+    return False
 
 class ErrorDialog(QDialog):
     """A custom dialog for showing detailed, scrollable error messages."""
@@ -1026,7 +1047,7 @@ class MainWindow(QMainWindow):
         self.profiles = {}
         self.current_profile_name = "Default"
         self.mounted_paths = set()
-        self.terminal_visible = self.terminal_manager.visible and self.terminal_manager.has_working_provider()
+        self.terminal_visible = self.terminal_manager.visible
         self.has_shown_tray_message = False
         self.is_quitting = False
 
@@ -1273,11 +1294,22 @@ class MainWindow(QMainWindow):
         # Accept both list and string forms but prefer explicit argument arrays to avoid injection issues.
         command_args = command if isinstance(command, list) else shlex.split(command)
         command_display = command if isinstance(command, str) else shlex.join(command_args)
-        self.write_to_terminal(command_display)
 
         if not command_args:
             QMessageBox.warning(self, "Command Error", "No command provided for gocryptfs operation.")
             return
+
+        executable = command_args[0]
+        executable_exists = False
+        if os.path.isabs(executable):
+            executable_exists = os.access(executable, os.X_OK)
+        else:
+            executable_exists = shutil.which(executable) is not None
+        if not executable_exists:
+            QMessageBox.critical(self, "Command Not Found", f"Required binary '{executable}' was not found in PATH.")
+            return
+
+        self.write_to_terminal(command_display)
 
         password = None
         if needs_password:
@@ -1455,8 +1487,9 @@ class MainWindow(QMainWindow):
         extra_args = []
         if flags.get("allow_other"): extra_args.append("-allow_other")
         if flags.get("reverse"): extra_args.append("-reverse")
-        if flags.get("scryptn"):
-            extra_args.extend(["-scryptn", str(flags["scryptn"])])
+        scryptn_value = self._validated_scryptn(flags.get("scryptn"))
+        if scryptn_value:
+            extra_args.extend(["-scryptn", scryptn_value])
 
         command_args = ["gocryptfs", *extra_args, cipher_dir, mount_point]
         
@@ -1706,15 +1739,60 @@ class MainWindow(QMainWindow):
         mount_point = volume.get("mount_point")
 
         try:
+            home_dir = _resolve_path("~")
+            allowed_roots = [home_dir]
+            extra_roots = self.settings.value("safe_delete_roots", [])
+            if isinstance(extra_roots, str):
+                extra_roots = [extra_roots]
+            for root in extra_roots or []:
+                try:
+                    allowed_roots.append(_resolve_path(str(root)))
+                except Exception:
+                    continue
+
+            resolved_targets = []
             for target in [cipher_dir, mount_point]:
                 if not target:
                     raise ValueError("Missing path for deletion.")
-                normalized = os.path.realpath(target)
-                if normalized in ("/", os.path.expanduser("~"), os.path.expanduser("~/")):
-                    raise ValueError(f"Refusing to delete unsafe path: {normalized}")
-                if os.path.isdir(normalized):
-                    self.write_to_terminal(f"Deleting directory tree: {normalized}")
-                    shutil.rmtree(normalized)
+                resolved = _resolve_path(target)
+                if resolved in (Path("/"), home_dir):
+                    raise ValueError(f"Refusing to delete unsafe path: {resolved}")
+                # If not allowed, require typed confirmation of the exact path
+                if not _is_path_allowed(resolved, allowed_roots):
+                    typed, ok = QInputDialog.getText(
+                        self,
+                        "Confirm Path Outside Safe Roots",
+                        f"The path\n{resolved}\nIs outside allowed roots.\n\nType the full path to confirm deletion:",
+                    )
+                    if not ok or typed.strip() != str(resolved):
+                        self.statusBar().showMessage("Deletion cancelled (path not confirmed).", 4000)
+                        return
+                resolved_targets.append(resolved)
+
+            # Deduplicate while preserving order
+            unique_targets = []
+            seen = set()
+            for path_obj in resolved_targets:
+                if str(path_obj) in seen:
+                    continue
+                seen.add(str(path_obj))
+                unique_targets.append(path_obj)
+
+            summary = "\n".join(str(p) for p in unique_targets)
+            confirm = QMessageBox.question(
+                self,
+                "Confirm Delete",
+                f"You are about to recursively delete the following directories:\n\n{summary}\n\nThis cannot be undone.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            if confirm != QMessageBox.StandardButton.Yes:
+                self.statusBar().showMessage("Deletion cancelled.", 3000)
+                return
+
+            for resolved in unique_targets:
+                if resolved.is_dir():
+                    self.write_to_terminal(f"Deleting directory tree: {resolved}")
+                    shutil.rmtree(resolved)
 
             self.statusBar().showMessage(f"Successfully deleted '{volume['label']}' and its mount point.", 5000)
             self.tray_icon.showMessage("Success", f"Securely deleted volume '{volume['label']}'.", QSystemTrayIcon.MessageIcon.Information, 3000)
@@ -1741,6 +1819,19 @@ class MainWindow(QMainWindow):
             
             self.profiles[self.current_profile_name]["volumes"][volume_id]["flags"] = flags
             self.save_current_profile() # Save changes to flags immediately
+
+    def _validated_scryptn(self, value: Optional[str]) -> Optional[str]:
+        if value is None or value == "":
+            return None
+        try:
+            num = int(str(value), 10)
+        except ValueError:
+            self.statusBar().showMessage("Invalid scryptn value; it must be an integer.", 5000)
+            return None
+        if num < 10 or num > 30:
+            self.statusBar().showMessage("scryptn must be between 10 and 30.", 5000)
+            return None
+        return str(num)
 
     def initialize_new_volume(self, volume_id, on_success=None):
         volume = self.profiles[self.current_profile_name]["volumes"][volume_id]
@@ -1820,7 +1911,7 @@ class MainWindow(QMainWindow):
         else:
             self.terminal_container.setMaximumHeight(target_height)
 
-        if visible:
+        if visible or not self.terminal_manager.has_working_provider():
             self.terminal_panel.refresh()
 
     def toggle_terminal(self):
@@ -1841,6 +1932,7 @@ class MainWindow(QMainWindow):
 
         if new_visible and not self.terminal_manager.has_working_provider():
             self.statusBar().showMessage("Terminal provider missing; showing setup instructions.", 6000)
+            self.terminal_panel.refresh()
 
 def main():
     # A check for QApplication instance
