@@ -4,6 +4,7 @@ import json
 import subprocess
 import shlex
 import shutil
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 from PyQt6.QtWidgets import (
@@ -66,6 +67,20 @@ def _count_entries(path: Path, limit: int = 500) -> int:
             return count
     except Exception:
         return 0
+
+
+def _append_delete_audit(entries):
+    try:
+        log_dir = Path(PROFILES_FILE).parent
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / "secure_delete.log"
+        timestamp = datetime.utcnow().isoformat() + "Z"
+        with log_file.open("a", encoding="utf-8") as f:
+            for entry in entries:
+                f.write(f"{timestamp} | {entry}\n")
+    except Exception:
+        # Audit log is best-effort
+        pass
 
 def format_cmd_for_echo(argv):
     redacted = []
@@ -1520,7 +1535,9 @@ class MainWindow(QMainWindow):
         extra_args = []
         if flags.get("allow_other"): extra_args.append("-allow_other")
         if flags.get("reverse"): extra_args.append("-reverse")
-        scryptn_value = self._validated_scryptn(flags.get("scryptn"))
+        scryptn_value, scryptn_valid = self._validated_scryptn(flags.get("scryptn"))
+        if not scryptn_valid:
+            return
         if scryptn_value:
             extra_args.extend(["-scryptn", scryptn_value])
 
@@ -1857,6 +1874,12 @@ class MainWindow(QMainWindow):
                     self.write_to_terminal(f"Deleting directory tree: {resolved}")
                     shutil.rmtree(resolved)
 
+            audit_entries = []
+            for entry in unique_targets:
+                status = "deleted_symlink" if entry["is_symlink"] else "deleted_dir"
+                audit_entries.append(f"{status} | profile={self.current_profile_name} | volume={volume.get('label','')} | path={entry['resolved']}")
+            _append_delete_audit(audit_entries)
+
             self.statusBar().showMessage(f"Successfully deleted '{volume['label']}' and its mount point.", 5000)
             self.tray_icon.showMessage("Success", f"Securely deleted volume '{volume['label']}'.", QSystemTrayIcon.MessageIcon.Information, 3000)
 
@@ -1883,20 +1906,20 @@ class MainWindow(QMainWindow):
             self.profiles[self.current_profile_name]["volumes"][volume_id]["flags"] = flags
             self.save_current_profile() # Save changes to flags immediately
 
-    def _validated_scryptn(self, value: Optional[str]) -> Optional[str]:
+    def _validated_scryptn(self, value: Optional[str]) -> tuple[Optional[str], bool]:
         if value is None or value == "":
-            return None
+            return None, True
         try:
             num = int(str(value), 10)
         except ValueError:
             self.statusBar().showMessage("Invalid scryptn value; it must be an integer.", 5000)
-            return None
+            return None, False
         if num < 10 or num > 28:
             self.statusBar().showMessage("scryptn must be between 10 and 28.", 5000)
             # Reset to default to avoid leaving a bad value lingering
             self.simplified_view.scryptn_edit.setText("16")
-            return None
-        return str(num)
+            return None, False
+        return str(num), True
 
     def initialize_new_volume(self, volume_id, on_success=None):
         volume = self.profiles[self.current_profile_name]["volumes"][volume_id]
