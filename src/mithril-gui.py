@@ -1933,7 +1933,7 @@ class MainWindow(QMainWindow):
         else:
             self.terminal_container.setMaximumHeight(target_height)
 
-        if visible or not self.terminal_manager.has_working_provider():
+        if visible:
             self.terminal_panel.refresh()
 
     def toggle_terminal(self):
@@ -1944,10 +1944,6 @@ class MainWindow(QMainWindow):
         if not self.terminal_manager.enabled:
             self.show_terminal_setup_dialog()
             return
-
-        if not self.terminal_visible:
-            self.terminal_manager.refresh_detection()
-            self.terminal_panel.refresh()
 
         new_visible = not self.terminal_visible
         self._set_terminal_visibility(new_visible)
