@@ -1848,8 +1848,10 @@ class MainWindow(QMainWindow):
         except ValueError:
             self.statusBar().showMessage("Invalid scryptn value; it must be an integer.", 5000)
             return None
-        if num < 10 or num > 30:
-            self.statusBar().showMessage("scryptn must be between 10 and 30.", 5000)
+        if num < 10 or num > 28:
+            self.statusBar().showMessage("scryptn must be between 10 and 28.", 5000)
+            # Reset to default to avoid leaving a bad value lingering
+            self.simplified_view.scryptn_edit.setText("16")
             return None
         return str(num)
 
