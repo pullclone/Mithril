@@ -54,6 +54,19 @@ def _is_path_allowed(target: Path, allowed_roots) -> bool:
             return True
     return False
 
+def _count_entries(path: Path, limit: int = 500) -> int:
+    """Return a bounded count of direct children to inform deletion prompts."""
+    try:
+        with os.scandir(path) as entries:
+            count = 0
+            for _ in entries:
+                count += 1
+                if count > limit:
+                    return count
+            return count
+    except Exception:
+        return 0
+
 def format_cmd_for_echo(argv):
     redacted = []
     skip_next = False
@@ -1775,8 +1788,10 @@ class MainWindow(QMainWindow):
                 if not target:
                     raise ValueError("Missing path for deletion.")
                 resolved = _resolve_path(target)
-                if resolved in (Path("/"), home_dir):
-                    raise ValueError(f"Refusing to delete unsafe path: {resolved}")
+                if resolved == Path("/"):
+                    raise ValueError("Refusing to delete the filesystem root.")
+                if resolved == home_dir:
+                    raise ValueError(f"Refusing to delete the home directory: {resolved}")
                 # If not allowed, require typed confirmation of the exact path
                 if not _is_path_allowed(resolved, allowed_roots):
                     typed, ok = QInputDialog.getText(
@@ -1799,6 +1814,14 @@ class MainWindow(QMainWindow):
                 unique_targets.append(path_obj)
 
             summary = "\n".join(str(p) for p in unique_targets)
+            counts = []
+            for p in unique_targets:
+                entry_count = _count_entries(p)
+                if entry_count:
+                    counts.append(f"{p} (contains ~{entry_count} items)" if entry_count <= 500 else f"{p} (contains more than 500 items)")
+                else:
+                    counts.append(str(p))
+            summary = "\n".join(counts)
             confirm = QMessageBox.question(
                 self,
                 "Confirm Delete",
